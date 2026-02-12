@@ -7,11 +7,18 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Message } from '@/types';
-import { createAISession, deleteAISession, fetchAIHistory, fetchAISessions, renameAISession, sendToAI } from '@/lib/aiChat';
+import {
+  createAISession,
+  deleteAISession,
+  fetchAIHistory,
+  fetchAISessions,
+  renameAISession,
+  sendToAI,
+} from '@/lib/aiChat';
 import { fetchThread, sendDoctorMessage } from '@/lib/doctorChat';
 import { Send, Bot, User, Stethoscope, Info, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { API_BASE } from "@/config/api";
+import { API_BASE } from '@/config/api';
 
 export default function Chat() {
   const { user } = useAuth();
@@ -41,6 +48,9 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<string>(sessionId);
 
+  // ✅ Mobile UI: show/hide History (AI tab only)
+  const [showHistoryMobile, setShowHistoryMobile] = useState(false);
+
   const resolveDoctorId = (maybeDoctorId: any): string | null => {
     if (!maybeDoctorId) return null;
     if (typeof maybeDoctorId === 'string') return maybeDoctorId;
@@ -69,6 +79,11 @@ export default function Chat() {
     }
   }, []);
 
+  // ✅ Mobile UI: when switching away from AI tab, close history panel
+  useEffect(() => {
+    if (activeTab !== 'ai') setShowHistoryMobile(false);
+  }, [activeTab]);
+
   const saveTitle = (sessionKey: string, title: string) => {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -77,9 +92,7 @@ export default function Chat() {
     }
     renameAISession(sessionKey, trimmed)
       .then((s) => {
-        setSessions((prev) =>
-          prev.map((it) => (it.id === s._id ? { ...it, title: s.title } : it))
-        );
+        setSessions((prev) => prev.map((it) => (it.id === s._id ? { ...it, title: s.title } : it)));
         setEditingSession(null);
       })
       .catch((err) => console.error('Rename session error:', err));
@@ -120,6 +133,7 @@ export default function Chat() {
     };
 
     loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   useEffect(() => {
@@ -245,10 +259,7 @@ export default function Chat() {
       } catch (error) {
         const aiError: Message = {
           id: `msg-${Date.now()}-ai-error`,
-          content:
-            error instanceof Error
-              ? error.message
-              : 'AI failed. Please try again.',
+          content: error instanceof Error ? error.message : 'AI failed. Please try again.',
           senderId: 'ai',
           senderType: 'ai',
           timestamp: new Date(),
@@ -264,13 +275,7 @@ export default function Chat() {
         const sent = await sendDoctorMessage(user.id, doctorPeerId, messageText);
         setDoctorMessages((prev) =>
           prev.map((m) =>
-            m.id === newMessage.id
-              ? {
-                  ...m,
-                  id: sent._id,
-                  timestamp: new Date(sent.createdAt),
-                }
-              : m
+            m.id === newMessage.id ? { ...m, id: sent._id, timestamp: new Date(sent.createdAt) } : m
           )
         );
       } catch (error) {
@@ -298,6 +303,8 @@ export default function Chat() {
           },
           ...prev,
         ]);
+        // ✅ Mobile UI: hide history after starting new chat
+        setShowHistoryMobile(false);
       })
       .catch((err) => console.error('Create session error:', err));
   };
@@ -319,59 +326,90 @@ export default function Chat() {
   return (
     <DashboardLayout>
       <div className="h-[calc(100vh-8rem)] flex flex-col">
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold text-foreground">Chat</h1>
-          <p className="text-muted-foreground">
-            {isDoctor
-              ? 'Communicate with your patients'
-              : 'Get support from AI or your doctor'}
+        <div className="mb-3 sm:mb-4">
+          <h1 className="text-xl sm:text-2xl font-bold text-foreground">Chat</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
+            {isDoctor ? 'Communicate with your patients' : 'Get support from AI or your doctor'}
           </p>
         </div>
 
         <Card className="flex-1 flex flex-col overflow-hidden">
           <CardHeader className="pb-0 border-b">
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'ai' | 'doctor')}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="ai" className="gap-2">
-                  <Sparkles className="h-4 w-4" />
-                  Thozhi
-                </TabsTrigger>
-                <TabsTrigger value="doctor" className="gap-2">
-                  <Stethoscope className="h-4 w-4" />
-                  {isDoctor ? 'Patient Chat' : 'Doctor Chat'}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div className="flex flex-col gap-2">
+              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'ai' | 'doctor')}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="ai" className="gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Thozhi
+                  </TabsTrigger>
+                  <TabsTrigger value="doctor" className="gap-2">
+                    <Stethoscope className="h-4 w-4" />
+                    {isDoctor ? 'Patient Chat' : 'Doctor Chat'}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              {/* ✅ Mobile-only toolbar for AI tab */}
+              {activeTab === 'ai' && (
+                <div className="flex gap-2 lg:hidden">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 rounded-xl flex-1"
+                    onClick={() => setShowHistoryMobile((s) => !s)}
+                  >
+                    {showHistoryMobile ? 'Hide history' : 'Show history'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 rounded-xl"
+                    onClick={startNewChat}
+                  >
+                    New
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
 
           {activeTab === 'ai' && (
-            <div className="flex items-center gap-2 bg-info/10 border-b border-info/20 px-4 py-2">
+            <div className="flex items-center gap-2 bg-info/10 border-b border-info/20 px-3 sm:px-4 py-2">
               <Info className="h-4 w-4 text-info shrink-0" />
               <p className="text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">Thozhi</span> - 
-                This assistant does not replace professional medical advice.
+                <span className="font-medium text-foreground">Thozhi</span> - This assistant does not
+                replace professional medical advice.
               </p>
             </div>
           )}
 
           <CardContent className="flex-1 p-0 overflow-hidden">
-            <div className="h-full flex">
+            {/* ✅ Mobile: column. Desktop: row */}
+            <div className="h-full flex flex-col lg:flex-row">
+              {/* ✅ History (AI only): hidden on mobile unless toggled */}
               {activeTab === 'ai' && (
-                <div className="w-72 shrink-0 border-r bg-muted/30 flex flex-col">
+                <div
+                  className={cn(
+                    'border-b lg:border-b-0 lg:border-r bg-muted/30',
+                    'w-full lg:w-72 lg:shrink-0',
+                    showHistoryMobile ? 'block' : 'hidden',
+                    'lg:block'
+                  )}
+                >
                   <div className="px-4 py-3 border-b relative z-10">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-medium text-foreground">History</p>
+
+                      {/* Desktop new chat button (kept) */}
                       <button
                         type="button"
                         onClick={startNewChat}
-                        className="text-xs rounded-md border px-2 py-1 pointer-events-auto"
+                        className="hidden lg:inline-flex text-xs rounded-md border px-2 py-1 pointer-events-auto"
                       >
                         New chat
                       </button>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Your Thozhi chats by session
-                    </p>
+                    <p className="text-xs text-muted-foreground">Your Thozhi chats by session</p>
                     <input
                       type="text"
                       value={searchQuery}
@@ -380,7 +418,8 @@ export default function Chat() {
                       className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none"
                     />
                   </div>
-                  <ScrollArea className="flex-1">
+
+                  <ScrollArea className="h-[40vh] lg:h-auto lg:flex-1">
                     <div className="p-3 space-y-2">
                       {filteredSessions.length === 0 && (
                         <div className="text-xs text-muted-foreground px-1">
@@ -396,11 +435,13 @@ export default function Chat() {
                           Start your first chat
                         </button>
                       )}
+
                       {filteredSessions.map((s) => {
                         const title =
                           titleMap[s.id] ||
                           s.title ||
                           `Chat ${new Date(s.createdAt || s.lastAt).toLocaleDateString()}`;
+
                         return (
                           <button
                             key={s.id}
@@ -409,6 +450,8 @@ export default function Chat() {
                               setSelectedSession(s.id);
                               setSessionId(s.id);
                               localStorage.setItem('vnx_chat_session', s.id);
+                              // ✅ Mobile: close history after selecting a session
+                              setShowHistoryMobile(false);
                             }}
                             className={cn(
                               'w-full text-left rounded-lg px-3 py-2 pr-10 text-sm border relative',
@@ -461,6 +504,7 @@ export default function Chat() {
                                   </div>
                                 )}
                               </div>
+
                               {editingSession === s.id ? (
                                 <input
                                   autoFocus
@@ -487,142 +531,155 @@ export default function Chat() {
                   </ScrollArea>
                 </div>
               )}
-              <ScrollArea className="h-full p-4 flex-1">
-                <div className="space-y-4">
-                  {activeTab === 'ai' && aiMessages.length <= 4 && (
-                    <div className="text-center py-8 animate-fade-in">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mx-auto mb-4">
-                        <Bot className="h-8 w-8 text-primary" />
-                      </div>
-                      <h3 className="font-semibold text-lg mb-2">Thozhi</h3>
-                      <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                        I'm here to help answer your pregnancy-related questions.
-                        Ask me about nutrition, symptoms, exercise, or any other concerns.
-                      </p>
-                    </div>
-                  )}
 
-                  {(activeTab === 'ai' ? aiMessages : doctorMessages).map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        'flex gap-3 animate-fade-in',
-                        message.senderType !== 'ai' && !isDoctor && message.senderType === 'user'
-                          ? 'flex-row-reverse'
-                          : '',
-                        isDoctor && message.senderType === 'doctor' ? 'flex-row-reverse' : ''
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                          message.isAI
-                            ? 'bg-primary/10'
-                            : message.senderType === 'doctor'
-                            ? 'bg-info/10'
-                            : 'bg-accent'
-                        )}
-                      >
-                        {message.isAI ? (
-                          <Bot className="h-4 w-4 text-primary" />
-                        ) : message.senderType === 'doctor' ? (
-                          <Stethoscope className="h-4 w-4 text-info" />
-                        ) : (
-                          <User className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </div>
-
-                      <div
-                        className={cn(
-                          'rounded-2xl px-4 py-3 max-w-[75%]',
-                          message.isAI
-                            ? 'bg-primary/10 rounded-tl-sm'
-                            : message.senderType === 'doctor'
-                            ? isDoctor
-                              ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                              : 'bg-info/10 rounded-tl-sm'
-                            : !isDoctor && message.senderType === 'user'
-                            ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                            : 'bg-accent rounded-tl-sm'
-                        )}
-                      >
-                        <p className="text-sm leading-relaxed">{message.content}</p>
-                        <p
-                          className={cn(
-                            'text-[10px] mt-1',
-                            message.senderType === 'user' && !isDoctor
-                              ? 'text-primary-foreground/70'
-                              : isDoctor && message.senderType === 'doctor'
-                              ? 'text-primary-foreground/70'
-                              : 'text-muted-foreground'
-                          )}
-                        >
-                          {message.timestamp.toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
+              {/* Chat panel */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <ScrollArea className="flex-1 p-3 sm:p-4">
+                  <div className="space-y-4">
+                    {activeTab === 'ai' && aiMessages.length <= 4 && (
+                      <div className="text-center py-6 sm:py-8 animate-fade-in">
+                        <div className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-primary/10 mx-auto mb-4">
+                          <Bot className="h-7 w-7 sm:h-8 sm:w-8 text-primary" />
+                        </div>
+                        <h3 className="font-semibold text-base sm:text-lg mb-2">Thozhi</h3>
+                        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                          I'm here to help answer your pregnancy-related questions. Ask me about
+                          nutrition, symptoms, exercise, or any other concerns.
                         </p>
                       </div>
-                    </div>
-                  ))}
+                    )}
 
-                  {isTyping && (
-                    <div className="flex gap-3 animate-fade-in">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
-                        <Bot className="h-4 w-4 text-primary" />
-                      </div>
-                      <div className="rounded-2xl bg-primary/10 px-4 py-3 rounded-tl-sm">
-                        <div className="flex gap-1">
-                          <span className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft" />
-                          <span className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft" style={{ animationDelay: '150ms' }} />
-                          <span className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft" style={{ animationDelay: '300ms' }} />
+                    {(activeTab === 'ai' ? aiMessages : doctorMessages).map((message) => (
+                      <div
+                        key={message.id}
+                        className={cn(
+                          'flex gap-3 animate-fade-in',
+                          message.senderType !== 'ai' && !isDoctor && message.senderType === 'user'
+                            ? 'flex-row-reverse'
+                            : '',
+                          isDoctor && message.senderType === 'doctor' ? 'flex-row-reverse' : ''
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+                            message.isAI
+                              ? 'bg-primary/10'
+                              : message.senderType === 'doctor'
+                              ? 'bg-info/10'
+                              : 'bg-accent'
+                          )}
+                        >
+                          {message.isAI ? (
+                            <Bot className="h-4 w-4 text-primary" />
+                          ) : message.senderType === 'doctor' ? (
+                            <Stethoscope className="h-4 w-4 text-info" />
+                          ) : (
+                            <User className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </div>
+
+                        <div
+                          className={cn(
+                            'rounded-2xl px-4 py-3',
+                            // ✅ Better widths on mobile
+                            'max-w-[90%] sm:max-w-[75%]',
+                            message.isAI
+                              ? 'bg-primary/10 rounded-tl-sm'
+                              : message.senderType === 'doctor'
+                              ? isDoctor
+                                ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                                : 'bg-info/10 rounded-tl-sm'
+                              : !isDoctor && message.senderType === 'user'
+                              ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                              : 'bg-accent rounded-tl-sm'
+                          )}
+                        >
+                          <p className="text-sm leading-relaxed">{message.content}</p>
+                          <p
+                            className={cn(
+                              'text-[10px] mt-1',
+                              message.senderType === 'user' && !isDoctor
+                                ? 'text-primary-foreground/70'
+                                : isDoctor && message.senderType === 'doctor'
+                                ? 'text-primary-foreground/70'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {message.timestamp.toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </p>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    ))}
 
-                  <div ref={messagesEndRef} />
+                    {isTyping && (
+                      <div className="flex gap-3 animate-fade-in">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+                          <Bot className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="rounded-2xl bg-primary/10 px-4 py-3 rounded-tl-sm">
+                          <div className="flex gap-1">
+                            <span className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft" />
+                            <span
+                              className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft"
+                              style={{ animationDelay: '150ms' }}
+                            />
+                            <span
+                              className="h-2 w-2 rounded-full bg-primary/50 animate-pulse-soft"
+                              style={{ animationDelay: '300ms' }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                  </div>
+                </ScrollArea>
+
+                {/* ✅ Sticky input bar on mobile */}
+                <div className="border-t p-3 sm:p-4 sticky bottom-0 bg-background">
+                  {activeTab === 'doctor' && !doctorPeerId && !isDoctor && (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      You don&apos;t have an assigned doctor yet.
+                    </p>
+                  )}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }}
+                    className="flex gap-2"
+                  >
+                    <Input
+                      placeholder={
+                        activeTab === 'ai'
+                          ? 'Ask a pregnancy-related question...'
+                          : isDoctor
+                          ? 'Message your patient...'
+                          : 'Message your doctor...'
+                      }
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      className="rounded-xl"
+                      disabled={activeTab === 'doctor' && !doctorPeerId && !isDoctor}
+                    />
+                    <Button
+                      type="submit"
+                      size="icon"
+                      className="rounded-xl shrink-0"
+                      disabled={activeTab === 'doctor' && !doctorPeerId && !isDoctor}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </form>
                 </div>
-              </ScrollArea>
+              </div>
             </div>
           </CardContent>
-
-          <div className="border-t p-4">
-            {activeTab === 'doctor' && !doctorPeerId && !isDoctor && (
-              <p className="mb-2 text-xs text-muted-foreground">
-                You don&apos;t have an assigned doctor yet.
-              </p>
-            )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendMessage();
-              }}
-              className="flex gap-2"
-            >
-              <Input
-                placeholder={
-                  activeTab === 'ai'
-                    ? 'Ask a pregnancy-related question...'
-                    : isDoctor
-                    ? 'Message your patient...'
-                    : 'Message your doctor...'
-                }
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                className="rounded-xl"
-                disabled={activeTab === 'doctor' && !doctorPeerId && !isDoctor}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                className="rounded-xl shrink-0"
-                disabled={activeTab === 'doctor' && !doctorPeerId && !isDoctor}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
-          </div>
         </Card>
       </div>
     </DashboardLayout>

@@ -9,20 +9,52 @@ const MOHFW_PRESS_URL =
   process.env.MOHFW_PRESS_URL || "https://mohfw.gov.in/press-releases";
 const MOHFW_HOME_URL = process.env.MOHFW_HOME_URL || "https://mohfw.gov.in/";
 
-const fetchWithNoStore = async (url, options = {}) =>
-  fetch(url, {
-    ...options,
-    headers: {
-      "Cache-Control": "no-store",
-      ...(options.headers || {}),
-    },
-  });
+// NEW: hard timeout for all outbound fetches (ms)
+const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 8000);
+
+/**
+ * NEW: fetch wrapper with no-store + timeout + safer headers
+ * - prevents hangs / ETIMEDOUT from killing your endpoint
+ */
+const fetchWithNoStore = async (url, options = {}) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Cache-Control": "no-store",
+        // Some sites block default user agents; this helps reliability
+        "User-Agent": "VNX-MomCare/1.0 (+https://example.com)",
+        ...(options.headers || {}),
+      },
+    });
+  } catch (err) {
+    // Normalize abort errors into a friendly message
+    if (err?.name === "AbortError") {
+      throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 const fetchJson = async (url) => {
   const res = await fetchWithNoStore(url);
-  const data = await res.json();
+  let data = null;
+
+  try {
+    data = await res.json();
+  } catch {
+    // if non-json response
+    data = null;
+  }
+
   if (!res.ok) {
-    const message = data?.message || data?.error || "Request failed";
+    const message = data?.message || data?.error || `Request failed (${res.status})`;
     throw new Error(message);
   }
   return data;
@@ -32,7 +64,7 @@ const fetchText = async (url) => {
   const res = await fetchWithNoStore(url);
   const text = await res.text();
   if (!res.ok) {
-    throw new Error("Request failed");
+    throw new Error(`Request failed (${res.status})`);
   }
   return text;
 };
@@ -59,6 +91,7 @@ const getGeo = async (city) => {
   const cleanCity = String(city || "").trim();
   if (!cleanCity) throw new Error("City not found");
   const q = encodeURIComponent(cleanCity);
+
   const urlWithCountry = `https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=1&language=en&format=json&country=${DEFAULT_COUNTRY}`;
   const data = await fetchJson(urlWithCountry);
   if (data?.results?.[0]) {
@@ -68,9 +101,11 @@ const getGeo = async (city) => {
       lon: data.results[0].longitude,
     };
   }
+
   const urlFallback = `https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=1&language=en&format=json`;
   const fallback = await fetchJson(urlFallback);
   if (!fallback?.results?.[0]) throw new Error(`City not found: ${cleanCity}`);
+
   return {
     name: fallback.results[0].name,
     lat: fallback.results[0].latitude,
@@ -102,9 +137,11 @@ const getBestTemp = (weather) => {
   const times = weather?.hourly?.time || [];
   const temps = weather?.hourly?.temperature_2m || [];
   if (!times.length || !temps.length) return 0;
+
   const now = Date.now();
   let bestIdx = 0;
   let bestDiff = Infinity;
+
   for (let i = 0; i < times.length; i++) {
     const t = Date.parse(times[i]);
     if (Number.isNaN(t)) continue;
@@ -124,9 +161,7 @@ const buildNotifications = (weather, city) => {
   const condition = weatherCodeToCondition(weather?.current?.weather_code ?? 0);
   const desc = condition.toLowerCase();
   const pop =
-    Math.max(
-      ...(weather?.hourly?.precipitation_probability || [0])
-    ) / 100;
+    Math.max(...(weather?.hourly?.precipitation_probability || [0])) / 100;
 
   if (condition === "Clear" && temp >= 30) {
     items.push({
@@ -137,10 +172,7 @@ const buildNotifications = (weather, city) => {
     });
   }
 
-  if (
-    ["Rain", "Drizzle", "Thunderstorm"].includes(condition) ||
-    pop >= 0.6
-  ) {
+  if (["Rain", "Drizzle", "Thunderstorm"].includes(condition) || pop >= 0.6) {
     items.push({
       type: "rain",
       title: `Rain expected in ${city}`,
@@ -270,9 +302,23 @@ router.post("/refresh", async (req, res) => {
     if (!userId) return res.status(400).json({ error: "User ID required" });
     if (!city) return res.status(400).json({ error: "City required" });
 
-    const geo = await getGeo(city);
-    const weather = await getWeather(geo.lat, geo.lon);
-    const { summary } = await ensureNotifications(userId, geo.name, weather);
+    // NEW: do not fail entire refresh if weather provider times out
+    let geo = null;
+    let weather = null;
+    let summary = null;
+    let resolvedCity = String(city || "").trim();
+
+    try {
+      geo = await getGeo(city);
+      resolvedCity = geo.name;
+      weather = await getWeather(geo.lat, geo.lon);
+      const result = await ensureNotifications(userId, geo.name, weather);
+      summary = result.summary;
+    } catch (err) {
+      console.error("Weather/geo fetch failed:", err);
+      // summary remains null; continue to MoHFW + DB notifications
+    }
+
     await ensureMohfwNotifications(userId);
 
     const notifications = await Notification.find({ userId })
@@ -280,7 +326,12 @@ router.post("/refresh", async (req, res) => {
       .limit(50)
       .lean();
 
-    res.json({ city: geo.name, summary, notifications });
+    // Keep response shape stable
+    res.json({
+      city: resolvedCity,
+      summary,
+      notifications,
+    });
   } catch (err) {
     console.error("Notification refresh error:", err);
     res.status(500).json({

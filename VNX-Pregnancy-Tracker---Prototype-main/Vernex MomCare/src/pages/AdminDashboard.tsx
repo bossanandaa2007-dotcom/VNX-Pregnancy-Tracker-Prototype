@@ -6,7 +6,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { DoctorCard } from '@/components/ui/doctor-card';
 import { RegisterDoctorDialog, Doctor } from '@/components/admin/RegisterDoctorDialog';
 import { useToast } from '@/hooks/use-toast';
-import { API_BASE } from "@/config/api";
+import { API_BASE } from '@/config/api';
+
+interface DoctorResponse {
+  _id: string;
+  name: string;
+  email: string;
+  specialty: string;
+  phone?: string;
+  patientCount?: number;
+}
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -14,54 +23,33 @@ export default function AdminDashboard() {
   const { toast } = useToast();
 
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [loading, setLoading] = useState(true);
   const [openRegister, setOpenRegister] = useState(false);
 
-  /* ================= FETCH DOCTORS + PATIENT COUNT ================= */
   useEffect(() => {
     const fetchDoctors = async () => {
       try {
-        // 1️⃣ Fetch doctors
+        setLoading(true);
+
         const res = await fetch(`${API_BASE}/api/auth/admin/doctors`);
         const data = await res.json();
 
         if (!res.ok || !data.success) {
-          throw new Error('Failed to fetch doctors');
+          throw new Error(data.message || 'Failed to fetch doctors');
         }
 
-        // 2️⃣ For each doctor, fetch patient count
-        const doctorsWithCount: Doctor[] = await Promise.all(
-          data.doctors.map(async (doc: any) => {
-            try {
-              const patientRes = await fetch(
-                `${API_BASE}/api/auth/doctor/patients/${doc._id}`
-              );
-              const patientData = await patientRes.json();
-
-              return {
-                id: doc._id,
-                name: doc.name,
-                email: doc.email,
-                specialty: doc.specialty,
-                phone: doc.phone,
-                patientCount: patientData.success
-                  ? patientData.patients.length
-                  : 0,
-              };
-            } catch {
-              return {
-                id: doc._id,
-                name: doc.name,
-                email: doc.email,
-                specialty: doc.specialty,
-                phone: doc.phone,
-                patientCount: 0,
-              };
-            }
+        const doctorsWithCount: Doctor[] = (Array.isArray(data.doctors) ? data.doctors : []).map(
+          (doc: DoctorResponse) => ({
+            id: doc._id,
+            name: doc.name,
+            email: doc.email,
+            specialty: doc.specialty,
+            phone: doc.phone,
+            patientCount: doc.patientCount ?? 0,
           })
         );
 
         setDoctors(doctorsWithCount);
-
       } catch (err) {
         console.error(err);
         toast({
@@ -69,11 +57,13 @@ export default function AdminDashboard() {
           description: 'Failed to load doctors',
           variant: 'destructive',
         });
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchDoctors();
-  }, []);
+  }, [toast]);
 
   const handleDoctorRegistered = (doctor: Doctor) => {
     setDoctors((prev) => [...prev, doctor]);
@@ -82,9 +72,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-6xl mx-auto space-y-8">
-
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl bg-primary/10 p-6">
+        <div className="flex flex-col gap-4 rounded-2xl bg-primary/10 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-primary">
               Admin Dashboard
@@ -117,7 +105,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Doctors Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {doctors.map((doctor) => (
             <DoctorCard
@@ -128,8 +115,13 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        {/* Empty State */}
-        {doctors.length === 0 && (
+        {loading && (
+          <div className="rounded-2xl border border-dashed p-12 text-center text-muted-foreground">
+            Loading doctors...
+          </div>
+        )}
+
+        {!loading && doctors.length === 0 && (
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed p-12">
             <p className="text-muted-foreground">
               No doctors registered yet
@@ -143,7 +135,6 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* Register Doctor Dialog */}
         <RegisterDoctorDialog
           open={openRegister}
           onOpenChange={setOpenRegister}

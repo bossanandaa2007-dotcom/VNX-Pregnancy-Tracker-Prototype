@@ -14,7 +14,6 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
-import { API_BASE } from "@/config/api";
 import {
   fetchResources,
   refreshNotifications,
@@ -37,6 +36,85 @@ type PatientProfile = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEVELOPMENT_BY_RANGE = [
+  {
+    min: 1,
+    max: 4,
+    summary:
+      'Your baby is beginning to form foundational structures. Early cells are organizing rapidly.',
+    highlights: [
+      'Implantation and early placental support are underway',
+      'Major growth signals start in the embryo',
+      'Focus on folic acid, rest, and hydration',
+    ],
+  },
+  {
+    min: 5,
+    max: 8,
+    summary:
+      'Core organs begin forming quickly. This is a high-growth stage for early development.',
+    highlights: [
+      'Heart activity starts and strengthens',
+      'Neural tube and brain structures keep developing',
+      'Regular prenatal vitamins are especially important',
+    ],
+  },
+  {
+    min: 9,
+    max: 13,
+    summary:
+      'Your baby transitions into the fetal stage with clearer body features and steady growth.',
+    highlights: [
+      'Face and limb features become more defined',
+      'Movement begins, though usually not felt yet',
+      'First trimester care and nutrition remain key',
+    ],
+  },
+  {
+    min: 14,
+    max: 20,
+    summary:
+      'Growth accelerates and your baby becomes more active. Senses start maturing.',
+    highlights: [
+      'Bones and muscles are strengthening',
+      'Hearing pathways begin developing',
+      'Some mothers start feeling baby movements',
+    ],
+  },
+  {
+    min: 21,
+    max: 27,
+    summary:
+      'Your baby continues steady growth and development every day.',
+    highlights: [
+      'Sleep and wake cycles become more defined',
+      'Lungs and brain continue to mature',
+      'Maintain hydration, rest, and regular checkups',
+    ],
+  },
+  {
+    min: 28,
+    max: 34,
+    summary:
+      'Your baby is gaining weight and preparing for life outside the womb.',
+    highlights: [
+      'Body fat increases to help temperature control',
+      'Brain connections grow rapidly',
+      'Practice movement tracking and attend scheduled visits',
+    ],
+  },
+  {
+    min: 35,
+    max: 40,
+    summary:
+      'Final growth and maturation phase. Your baby is preparing for delivery.',
+    highlights: [
+      'Lungs reach near-full readiness',
+      'Positioning for birth typically occurs',
+      'Stay alert for labor signs and keep hospital plan ready',
+    ],
+  },
+];
 
 const getMilestoneByWeek = (week: number) => {
   if (week <= 13) return 'First Trimester';
@@ -54,6 +132,13 @@ const getBabySizeVisual = (week: number) => {
   if (week <= 32) return { emoji: '\u{1F965}', label: 'Coconut', description: '~42 cm long' };
   if (week <= 36) return { emoji: '\u{1F34D}', label: 'Pineapple', description: '~47 cm long' };
   return { emoji: '\u{1F349}', label: 'Watermelon', description: '~50 cm long' };
+};
+
+const getBabyDevelopmentContent = (week: number) => {
+  return (
+    DEVELOPMENT_BY_RANGE.find((item) => week >= item.min && week <= item.max) ??
+    DEVELOPMENT_BY_RANGE[0]
+  );
 };
 
 const calculatePregnancyProgress = (startDate: string | undefined, now: Date) => {
@@ -84,10 +169,6 @@ const pad2 = (n: number) => n.toString().padStart(2, '0');
 
 export function PatientDashboard() {
   const { user } = useAuth();
-  const [patient, setPatient] = useState<PatientProfile | null>(null);
-  const [patientLoading, setPatientLoading] = useState(false);
-  const [patientError, setPatientError] = useState('');
-
   const [city, setCity] = useState(() => localStorage.getItem('vnx_city') || 'Chennai');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [summary, setSummary] = useState<WeatherSummary | null>(null);
@@ -99,14 +180,6 @@ export function PatientDashboard() {
   const [secondsToNext, setSecondsToNext] = useState(0);
   const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const [now, setNow] = useState<Date>(new Date());
-  const [babyDevelopmentText, setBabyDevelopmentText] = useState(
-    'Your baby continues to grow and develop every day.'
-  );
-  const [babyHighlights, setBabyHighlights] = useState<string[]>([
-    'Baby continues steady growth this week',
-    'Sleep and wake cycles become more defined',
-    'Continue hydration, rest, and regular checkups',
-  ]);
   const notificationsRef = useRef<HTMLDivElement>(null);
 
   const refreshIntervalMs = 10 * 60 * 1000;
@@ -132,12 +205,16 @@ export function PatientDashboard() {
     { icon: Droplets, text: 'Stay hydrated - 8 glasses', time: 'Daily goal' },
   ];
 
-  const profile = (patient ?? (user as unknown as PatientProfile) ?? {}) as PatientProfile;
+  const profile = ((user as unknown as PatientProfile) ?? {}) as PatientProfile;
   const pregnancy = useMemo(
     () => calculatePregnancyProgress(profile.pregnancyStartDate, now),
     [profile.pregnancyStartDate, now]
   );
   const babySize = getBabySizeVisual(pregnancy.week);
+  const babyDevelopment = useMemo(
+    () => getBabyDevelopmentContent(pregnancy.week),
+    [pregnancy.week]
+  );
 
   const filteredNotifications = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -198,63 +275,6 @@ export function PatientDashboard() {
     return () => clearInterval(id);
   }, [lastUpdatedAt]);
 
-  useEffect(() => {
-    const loadPatient = async () => {
-      if (!user?.id || user.role !== 'patient') return;
-      setPatientLoading(true);
-      setPatientError('');
-      try {
-        let data: any = null;
-
-        const byIdRes = await fetch(`${API_BASE}/api/auth/patient/${user.id}`);
-        if (byIdRes.ok) {
-          data = await byIdRes.json();
-        } else if (user.email) {
-          const byEmailRes = await fetch(
-            `${API_BASE}/api/auth/patient/by-email/${encodeURIComponent(user.email)}`
-          );
-          if (byEmailRes.ok) {
-            data = await byEmailRes.json();
-          }
-        }
-
-        if (data?.success && data?.patient) {
-          setPatient(data.patient);
-        } else {
-          setPatient(user as unknown as PatientProfile);
-          setPatientError('Using basic profile data. Restart backend for full sync.');
-        }
-      } catch (err) {
-        console.error('Patient fetch error:', err);
-        setPatient(user as unknown as PatientProfile);
-        setPatientError('Using basic profile data. Restart backend for full sync.');
-      } finally {
-        setPatientLoading(false);
-      }
-    };
-
-    loadPatient();
-  }, [user?.id, user?.role, user?.email]);
-
-  useEffect(() => {
-    const loadBabyDevelopment = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/pregnancy/development/${pregnancy.week}`);
-        const data = await res.json();
-        if (res.ok && data?.success) {
-          if (data.summary) setBabyDevelopmentText(data.summary);
-          if (Array.isArray(data.highlights) && data.highlights.length > 0) {
-            setBabyHighlights(data.highlights);
-          }
-        }
-      } catch (error) {
-        console.error('Baby development fetch error:', error);
-      }
-    };
-
-    loadBabyDevelopment();
-  }, [pregnancy.week]);
-
   const formatSeconds = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -271,8 +291,6 @@ export function PatientDashboard() {
             Hello, {(profile?.name || user?.name || 'Mom').split(' ')[0]}!
           </h1>
           <p className="text-muted-foreground">Here&apos;s your pregnancy journey at a glance</p>
-          {patientLoading && <p className="text-xs text-muted-foreground">Loading your profile...</p>}
-          {patientError && <p className="text-xs text-muted-foreground">{patientError}</p>}
         </div>
         <div className="rounded-xl border bg-background px-4 py-2 text-right">
           <p className="text-xs text-muted-foreground">
@@ -481,11 +499,11 @@ export function PatientDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-muted-foreground leading-relaxed">{babyDevelopmentText}</p>
+            <p className="text-muted-foreground leading-relaxed">{babyDevelopment.summary}</p>
             <div className="rounded-xl bg-accent/50 p-4">
               <p className="text-sm font-medium text-foreground mb-2">This Week&apos;s Highlights:</p>
               <ul className="space-y-1 text-sm text-muted-foreground">
-                {babyHighlights.map((item, idx) => (
+                {babyDevelopment.highlights.map((item, idx) => (
                   <li key={idx}>- {item}</li>
                 ))}
               </ul>

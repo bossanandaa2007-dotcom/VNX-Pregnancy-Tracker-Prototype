@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useSpeechRecognition, type VoiceLanguage } from '@/hooks/useSpeechRecognition';
 import { Message } from '@/types';
 import {
   createAISession,
@@ -16,9 +17,18 @@ import {
   sendToAI,
 } from '@/lib/aiChat';
 import { fetchThread, sendDoctorMessage } from '@/lib/doctorChat';
-import { Send, Bot, User, Stethoscope, Info, Sparkles } from 'lucide-react';
+import { SPEECH_EVENT_NAME, speakResponse, stopSpeaking } from '@/utils/speechSynthesis';
+import { Send, Bot, User, Stethoscope, Info, Sparkles, Mic, Square, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { API_BASE } from '@/config/api';
+
+const mergeVoiceTranscript = (baseText: string, transcript: string) => {
+  if (!baseText) return transcript;
+  if (!transcript) return baseText;
+  return `${baseText}${baseText.endsWith(' ') ? '' : ' '}${transcript}`;
+};
+
+type ChatInputMode = 'text' | 'voice';
 
 export default function Chat() {
   const { user } = useAuth();
@@ -43,10 +53,25 @@ export default function Chat() {
     Array<{ id: string; lastMessage: string; lastAt: string; createdAt?: string; title?: string }>
   >([]);
   const [sessionError, setSessionError] = useState('');
-  const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const voiceLanguage: VoiceLanguage = 'en';
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<string>(sessionId);
+  const voiceInputBaseRef = useRef('');
+  const voicePauseTimeoutRef = useRef<number | null>(null);
+  const lastSpokenAiMessageIdRef = useRef<string | null>(null);
+  const shouldSpeakNextAiResponseRef = useRef(false);
+  const {
+    clearTranscript,
+    error: speechRecognitionError,
+    finalTranscript,
+    isListening,
+    isSupported: isSpeechRecognitionSupported,
+    startListening,
+    stopListening,
+    transcript,
+  } = useSpeechRecognition(voiceLanguage);
 
   // ✅ Mobile UI: show/hide History (AI tab only)
   const [showHistoryMobile, setShowHistoryMobile] = useState(false);
@@ -69,6 +94,73 @@ export default function Chat() {
   useEffect(() => {
     sessionRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    if (activeTab === 'ai' || !isListening) return;
+    stopListening();
+  }, [activeTab, isListening, stopListening]);
+
+  useEffect(() => {
+    const handleSpeechStateChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ state?: 'start' | 'end' }>).detail;
+      setIsAiSpeaking(detail?.state === 'start');
+    };
+
+    window.addEventListener(SPEECH_EVENT_NAME, handleSpeechStateChange as EventListener);
+    return () => {
+      window.removeEventListener(SPEECH_EVENT_NAME, handleSpeechStateChange as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'ai') return;
+    if (isListening) {
+      stopListening();
+    }
+    shouldSpeakNextAiResponseRef.current = false;
+    setIsAiSpeaking(false);
+    stopSpeaking();
+    clearTranscript();
+  }, [activeTab, clearTranscript, isListening, stopListening]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai' || !transcript) return;
+    setInputValue(mergeVoiceTranscript(voiceInputBaseRef.current, transcript));
+  }, [activeTab, transcript]);
+
+  useEffect(() => {
+    if (voicePauseTimeoutRef.current) {
+      window.clearTimeout(voicePauseTimeoutRef.current);
+      voicePauseTimeoutRef.current = null;
+    }
+
+    if (
+      activeTab !== 'ai' || !isListening || !transcript
+    ) {
+      return;
+    }
+
+    voicePauseTimeoutRef.current = window.setTimeout(() => {
+      stopListening();
+    }, 1250);
+
+    return () => {
+      if (voicePauseTimeoutRef.current) {
+        window.clearTimeout(voicePauseTimeoutRef.current);
+        voicePauseTimeoutRef.current = null;
+      }
+    };
+  }, [activeTab, isListening, stopListening, transcript]);
+
+  useEffect(() => {
+    if (
+      activeTab !== 'ai' || !finalTranscript || isTyping
+    ) {
+      return;
+    }
+
+    void handleSendMessage(finalTranscript, 'voice');
+  }, [activeTab, finalTranscript, isTyping]);
 
   useEffect(() => {
     try {
@@ -154,6 +246,7 @@ export default function Chat() {
           timestamp: new Date(m.createdAt),
           isAI: m.role === 'assistant',
         }));
+        lastSpokenAiMessageIdRef.current = mapped[mapped.length - 1]?.id ?? null;
         setAiMessages(mapped);
       } catch (error) {
         console.error('AI history error:', error);
@@ -196,6 +289,31 @@ export default function Chat() {
   }, [user?.id, user?.role, user?.email]);
 
   useEffect(() => {
+    const latestMessage = aiMessages[aiMessages.length - 1];
+
+    if (
+      activeTab !== 'ai' ||
+      !latestMessage?.isAI ||
+      isTyping ||
+      latestMessage.id.includes('-ai-error')
+    ) {
+      return;
+    }
+
+    if (lastSpokenAiMessageIdRef.current === latestMessage.id) {
+      return;
+    }
+
+    lastSpokenAiMessageIdRef.current = latestMessage.id;
+    if (!shouldSpeakNextAiResponseRef.current) {
+      return;
+    }
+
+    shouldSpeakNextAiResponseRef.current = false;
+    speakResponse(latestMessage.content, voiceLanguage);
+  }, [activeTab, aiMessages, isTyping, voiceLanguage]);
+
+  useEffect(() => {
     const loadDoctorThread = async () => {
       if (!user?.id || !doctorPeerId) return;
       try {
@@ -220,14 +338,23 @@ export default function Chat() {
     return () => clearInterval(id);
   }, [activeTab, doctorPeerId, user?.id]);
 
-  const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+  const handleSendMessage = async (messageOverride?: string, inputMode: ChatInputMode = 'text') => {
+    const resolvedMessage = (messageOverride ?? inputValue).trim();
+
+    if (!resolvedMessage) return;
     if (activeTab === 'doctor' && !doctorPeerId) return;
 
-    const messageText = inputValue.trim();
+    if (inputMode === 'voice' && activeTab === 'ai') {
+      shouldSpeakNextAiResponseRef.current = true;
+    } else {
+      shouldSpeakNextAiResponseRef.current = false;
+      setIsAiSpeaking(false);
+      stopSpeaking();
+    }
+
     const newMessage: Message = {
       id: `msg-${Date.now()}`,
-      content: messageText,
+      content: resolvedMessage,
       senderId: user?.id || 'user',
       senderType: isDoctor ? 'doctor' : 'user',
       timestamp: new Date(),
@@ -239,6 +366,8 @@ export default function Chat() {
       setDoctorMessages((prev) => [...prev, newMessage]);
     }
     setInputValue('');
+    clearTranscript();
+    voiceInputBaseRef.current = '';
 
     if (activeTab === 'ai') {
       setIsTyping(true);
@@ -246,7 +375,7 @@ export default function Chat() {
         if (!user?.id) {
           throw new Error('User not found. Please log in again.');
         }
-        const reply = await sendToAI(messageText, user.id, sessionId);
+        const reply = await sendToAI(resolvedMessage, user.id, sessionId);
         const aiResponse: Message = {
           id: `msg-${Date.now()}-ai`,
           content: reply,
@@ -272,7 +401,7 @@ export default function Chat() {
     } else {
       if (!user?.id || !doctorPeerId) return;
       try {
-        const sent = await sendDoctorMessage(user.id, doctorPeerId, messageText);
+        const sent = await sendDoctorMessage(user.id, doctorPeerId, resolvedMessage);
         setDoctorMessages((prev) =>
           prev.map((m) =>
             m.id === newMessage.id ? { ...m, id: sent._id, timestamp: new Date(sent.createdAt) } : m
@@ -293,6 +422,10 @@ export default function Chat() {
         setSelectedSession(s._id);
         setAiMessages([]);
         setIsTyping(false);
+        setIsAiSpeaking(false);
+        shouldSpeakNextAiResponseRef.current = false;
+        stopSpeaking();
+        lastSpokenAiMessageIdRef.current = null;
         setSessions((prev) => [
           {
             id: s._id,
@@ -317,10 +450,27 @@ export default function Chat() {
           setAiMessages([]);
           setSelectedSession(null);
           setSessionId('');
+          setIsAiSpeaking(false);
+          shouldSpeakNextAiResponseRef.current = false;
+          stopSpeaking();
+          lastSpokenAiMessageIdRef.current = null;
           localStorage.removeItem('vnx_chat_session');
         }
       })
       .catch((err) => console.error('Delete session error:', err));
+  };
+
+  const handleVoiceInputToggle = () => {
+    if (!isSpeechRecognitionSupported || activeTab !== 'ai') return;
+
+    if (isListening) {
+      stopListening();
+      return;
+    }
+
+    voiceInputBaseRef.current = inputValue;
+    clearTranscript();
+    startListening();
   };
 
   return (
@@ -350,26 +500,6 @@ export default function Chat() {
               </Tabs>
 
               {/* ✅ Mobile-only toolbar for AI tab */}
-              {activeTab === 'ai' && (
-                <div className="flex gap-2 lg:hidden">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 rounded-xl flex-1"
-                    onClick={() => setShowHistoryMobile((s) => !s)}
-                  >
-                    {showHistoryMobile ? 'Hide history' : 'Show history'}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 rounded-xl"
-                    onClick={startNewChat}
-                  >
-                    New
-                  </Button>
-                </div>
-              )}
             </div>
           </CardHeader>
 
@@ -385,15 +515,23 @@ export default function Chat() {
 
           <CardContent className="flex-1 p-0 overflow-hidden">
             {/* ✅ Mobile: column. Desktop: row */}
-            <div className="h-full flex flex-col lg:flex-row">
+            <div className="relative h-full flex">
+              {activeTab === 'ai' && (
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryMobile((s) => !s)}
+                  className="absolute left-3 top-3 z-30 inline-flex h-10 w-10 items-center justify-center rounded-full border bg-background/95 shadow-md transition-all hover:bg-accent/30"
+                  aria-label={showHistoryMobile ? 'Hide history' : 'Show history'}
+                >
+                  {showHistoryMobile ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
+              )}
               {/* ✅ History (AI only): hidden on mobile unless toggled */}
               {activeTab === 'ai' && (
                 <div
                   className={cn(
-                    'border-b lg:border-b-0 lg:border-r bg-muted/30',
-                    'w-full lg:w-72 lg:shrink-0',
-                    showHistoryMobile ? 'block' : 'hidden',
-                    'lg:block'
+                    'absolute inset-y-0 left-0 z-20 flex w-[min(22rem,86vw)] flex-col border-r bg-background shadow-xl transition-transform duration-300',
+                    showHistoryMobile ? 'translate-x-0' : '-translate-x-full'
                   )}
                 >
                   <div className="px-4 py-3 border-b relative z-10">
@@ -419,7 +557,7 @@ export default function Chat() {
                     />
                   </div>
 
-                  <ScrollArea className="h-[40vh] lg:h-auto lg:flex-1">
+                  <div className="h-[40vh] overflow-y-auto lg:h-full lg:flex-1">
                     <div className="p-3 space-y-2">
                       {filteredSessions.length === 0 && (
                         <div className="text-xs text-muted-foreground px-1">
@@ -443,99 +581,79 @@ export default function Chat() {
                           `Chat ${new Date(s.createdAt || s.lastAt).toLocaleDateString()}`;
 
                         return (
-                          <button
+                          <div
                             key={s.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedSession(s.id);
-                              setSessionId(s.id);
-                              localStorage.setItem('vnx_chat_session', s.id);
-                              // ✅ Mobile: close history after selecting a session
-                              setShowHistoryMobile(false);
-                            }}
                             className={cn(
-                              'w-full text-left rounded-lg px-3 py-2 pr-10 text-sm border relative',
+                              'w-full rounded-lg border px-3 py-2 text-sm',
                               selectedSession === s.id
                                 ? 'bg-primary/10 border-primary/30 text-foreground'
                                 : 'bg-background border-border'
                             )}
                           >
-                            <div className="flex items-center justify-between gap-2 pointer-events-auto">
-                              <div className="relative pointer-events-auto z-20">
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1">
+                                {editingSession === s.id ? (
+                                  <input
+                                    autoFocus
+                                    className="w-full rounded-md border border-primary/30 bg-background px-2 py-1 text-sm font-medium outline-none"
+                                    defaultValue={title}
+                                    onBlur={(e) => saveTitle(s.id, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        saveTitle(s.id, (e.target as HTMLInputElement).value);
+                                      }
+                                      if (e.key === 'Escape') {
+                                        setEditingSession(null);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedSession(s.id);
+                                      setSessionId(s.id);
+                                      localStorage.setItem('vnx_chat_session', s.id);
+                                      setShowHistoryMobile(false);
+                                    }}
+                                    className="w-full text-left"
+                                  >
+                                    <div className="font-medium truncate">{title}</div>
+                                  </button>
+                                )}
+                                <div className="mt-1 text-xs text-muted-foreground truncate">
+                                  {s.lastMessage || 'Chat'}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
                                 <button
                                   type="button"
-                                  className="px-1 text-sm text-muted-foreground hover:text-foreground"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setMenuSessionId((prev) => (prev === s.id ? null : s.id));
-                                  }}
+                                  className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                                  onClick={() => setEditingSession(s.id)}
                                 >
-                                  ⋯
+                                  Rename
                                 </button>
-                                {menuSessionId === s.id && (
-                                  <div
-                                    className="absolute left-0 mt-1 w-28 rounded-md border bg-background shadow-md z-30"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                    }}
-                                  >
-                                    <button
-                                      type="button"
-                                      className="w-full text-left px-3 py-2 text-xs hover:bg-accent/30"
-                                      onClick={() => {
-                                        setEditingSession(s.id);
-                                        setMenuSessionId(null);
-                                      }}
-                                    >
-                                      Rename
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-accent/30"
-                                      onClick={() => {
-                                        handleDeleteSession(s.id);
-                                        setMenuSessionId(null);
-                                      }}
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                )}
+                                <button
+                                  type="button"
+                                  className="rounded-md px-2 py-1 text-[11px] font-medium text-red-500 transition-colors hover:bg-red-50"
+                                  onClick={() => handleDeleteSession(s.id)}
+                                >
+                                  Delete
+                                </button>
                               </div>
-
-                              {editingSession === s.id ? (
-                                <input
-                                  autoFocus
-                                  className="w-full bg-transparent text-sm font-medium outline-none"
-                                  defaultValue={title}
-                                  onBlur={(e) => saveTitle(s.id, e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      saveTitle(s.id, (e.target as HTMLInputElement).value);
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <div className="font-medium truncate">{title}</div>
-                              )}
                             </div>
-                            <div className="text-xs text-muted-foreground truncate">
-                              {s.lastMessage || 'Chat'}
-                            </div>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </div>
               )}
 
               {/* Chat panel */}
               <div className="flex-1 flex flex-col min-h-0">
                 <ScrollArea className="flex-1 p-3 sm:p-4">
-                  <div className="space-y-4">
+                  <div className="space-y-4 pb-4">
                     {activeTab === 'ai' && aiMessages.length <= 4 && (
                       <div className="text-center py-6 sm:py-8 animate-fade-in">
                         <div className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-primary/10 mx-auto mb-4">
@@ -636,7 +754,15 @@ export default function Chat() {
                       </div>
                     )}
 
-                    <div ref={messagesEndRef} />
+                    <div
+                      ref={messagesEndRef}
+                      className={cn(
+                        'shrink-0 transition-all duration-300',
+                        activeTab === 'ai' && (isListening || isAiSpeaking)
+                          ? 'h-32 sm:h-36'
+                          : 'h-20 sm:h-24'
+                      )}
+                    />
                   </div>
                 </ScrollArea>
 
@@ -647,10 +773,43 @@ export default function Chat() {
                       You don&apos;t have an assigned doctor yet.
                     </p>
                   )}
+                  {activeTab === 'ai' && (isListening || isAiSpeaking) && (
+                    <div
+                      className={cn(
+                        'mb-3 flex items-center justify-between rounded-2xl border px-4 py-3',
+                        isListening
+                          ? 'border-primary/30 bg-primary/10 text-primary'
+                          : 'border-primary/30 bg-primary/10 text-primary'
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={cn('voice-orb', isListening ? 'voice-orb-listening' : 'voice-orb-speaking')} />
+                        <div>
+                          <p className="text-sm font-medium leading-none">
+                            {isListening ? 'Listening to you' : 'Thozhi is speaking'}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {isListening
+                              ? 'Speak naturally. Your message will send when you finish.'
+                              : 'Voice reply is active only for mic-triggered messages.'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="voice-bars" aria-hidden="true">
+                        <span className="voice-bar" />
+                        <span className="voice-bar" />
+                        <span className="voice-bar" />
+                        <span className="voice-bar" />
+                      </div>
+                    </div>
+                  )}
+                  {activeTab === 'ai' && speechRecognitionError && (
+                    <p className="mb-3 text-xs text-destructive">{speechRecognitionError}</p>
+                  )}
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      handleSendMessage();
+                      handleSendMessage(undefined, 'text');
                     }}
                     className="flex gap-2"
                   >
@@ -667,6 +826,33 @@ export default function Chat() {
                       className="rounded-xl"
                       disabled={activeTab === 'doctor' && !doctorPeerId && !isDoctor}
                     />
+                    {activeTab === 'ai' && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant={isListening ? 'default' : 'outline'}
+                        className={cn(
+                          'rounded-xl shrink-0 transition-all duration-300',
+                          isListening && 'scale-105 shadow-[0_0_0_8px_rgba(244,114,182,0.14)]'
+                        )}
+                        onClick={handleVoiceInputToggle}
+                        disabled={!isSpeechRecognitionSupported}
+                        aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+                        title={
+                          isSpeechRecognitionSupported
+                            ? isListening
+                              ? 'Stop listening'
+                              : 'Start voice input'
+                            : 'Speech recognition is not supported in this browser'
+                        }
+                      >
+                        {isListening ? (
+                          <Square className="h-4 w-4 animate-pulse" />
+                        ) : (
+                          <Mic className="h-4 w-4" />
+                        )}
+                      </Button>
+                    )}
                     <Button
                       type="submit"
                       size="icon"
@@ -685,3 +871,4 @@ export default function Chat() {
     </DashboardLayout>
   );
 }
+

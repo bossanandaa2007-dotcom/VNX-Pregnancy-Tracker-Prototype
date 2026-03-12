@@ -137,4 +137,84 @@
   .glow {
     box-shadow: var(--shadow-glow);
   }
+
+  .voice-orb {
+    @apply h-3 w-3 rounded-full;
+  }
+
+  .voice-orb-listening {
+    background: hsl(var(--primary));
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+    animation: voice-ping 1.4s ease-out infinite;
+  }
+
+  .voice-orb-speaking {
+    background: hsl(var(--primary));
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+    animation: voice-ping 1.4s ease-out infinite;
+  }
+
+  .voice-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.2rem;
+    height: 1.5rem;
+  }
+
+  .voice-bar {
+    width: 0.2rem;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.8;
+    animation: voice-wave 0.95s ease-in-out infinite;
+  }
+
+  .voice-bar:nth-child(1) {
+    height: 0.55rem;
+  }
+
+  .voice-bar:nth-child(2) {
+    height: 1.1rem;
+    animation-delay: 0.12s;
+  }
+
+  .voice-bar:nth-child(3) {
+    height: 0.75rem;
+    animation-delay: 0.24s;
+  }
+
+  .voice-bar:nth-child(4) {
+    height: 1.3rem;
+    animation-delay: 0.36s;
+  }
+}
+
+@keyframes voice-wave {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes voice-ping {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 currentColor;
+  }
+
+  70% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 10px transparent;
+  }
+
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
 }

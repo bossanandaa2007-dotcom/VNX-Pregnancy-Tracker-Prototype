@@ -15,7 +15,7 @@ interface PatientItem {
 }
 
 export default function AdminDoctorDetail() {
-  const { id: doctorId } = useParams(); // MongoDB doctor _id
+  const { doctorId } = useParams(); // MongoDB doctor _id
   const navigate = useNavigate();
   const { logout } = useAuth();
   const { toast } = useToast();

@@ -1,8 +1,10 @@
 const express = require("express");
 const cheerio = require("cheerio");
+const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
 
 const router = express.Router();
+const memoryNotifications = [];
 
 const DEFAULT_COUNTRY = process.env.OPENWEATHER_COUNTRY || "IN";
 const MOHFW_PRESS_URL =
@@ -11,6 +13,58 @@ const MOHFW_HOME_URL = process.env.MOHFW_HOME_URL || "https://mohfw.gov.in/";
 
 // NEW: hard timeout for all outbound fetches (ms)
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 8000);
+
+const isDatabaseReady = () => mongoose.connection.readyState === 1;
+
+const sortByNewest = (items) =>
+  [...items].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+const findNotificationByFingerprint = async (fingerprint) => {
+  if (isDatabaseReady()) {
+    return Notification.findOne({ fingerprint }).lean();
+  }
+
+  return (
+    memoryNotifications.find((item) => item.fingerprint === fingerprint) || null
+  );
+};
+
+const createNotificationRecord = async (payload) => {
+  if (isDatabaseReady()) {
+    return Notification.create(payload);
+  }
+
+  const now = new Date().toISOString();
+  const doc = {
+    _id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    read: false,
+    source: "openweather",
+    url: "",
+    ...payload,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  memoryNotifications.push(doc);
+  return doc;
+};
+
+const listNotifications = async ({ userId, city, limit = 50 }) => {
+  if (isDatabaseReady()) {
+    const query = { userId };
+    if (city) query.city = city;
+
+    return Notification.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+  }
+
+  return sortByNewest(
+    memoryNotifications.filter(
+      (item) => item.userId === userId && (!city || item.city === city)
+    )
+  ).slice(0, limit);
+};
 
 /**
  * NEW: fetch wrapper with no-store + timeout + safer headers
@@ -211,9 +265,9 @@ const ensureNotifications = async (userId, city, weather) => {
   const created = [];
   for (const item of items) {
     const fingerprint = `${userId}|${city}|${item.type}|${item.title}|${today}`;
-    const exists = await Notification.findOne({ fingerprint }).lean();
+    const exists = await findNotificationByFingerprint(fingerprint);
     if (exists) continue;
-    const doc = await Notification.create({
+    const doc = await createNotificationRecord({
       userId,
       city,
       type: item.type,
@@ -275,12 +329,12 @@ const ensureMohfwNotifications = async (userId) => {
   const created = [];
   for (const u of updates) {
     const fingerprint = `${userId}|mohfw|${u.url}`;
-    const exists = await Notification.findOne({ fingerprint }).lean();
+    const exists = await findNotificationByFingerprint(fingerprint);
     if (exists) continue;
     const severity = /alert|emergency|outbreak|epidemic|pandemic/i.test(u.title)
       ? "danger"
       : "info";
-    const doc = await Notification.create({
+    const doc = await createNotificationRecord({
       userId,
       city: "India",
       type: "health",
@@ -321,10 +375,7 @@ router.post("/refresh", async (req, res) => {
 
     await ensureMohfwNotifications(userId);
 
-    const notifications = await Notification.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
+    const notifications = await listNotifications({ userId, limit: 50 });
 
     // Keep response shape stable
     res.json({
@@ -346,14 +397,7 @@ router.get("/", async (req, res) => {
     const { userId, city, limit } = req.query;
     if (!userId) return res.status(400).json({ error: "User ID required" });
     const safeLimit = Math.min(Number(limit) || 50, 200);
-
-    const query = { userId };
-    if (city) query.city = city;
-
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(safeLimit)
-      .lean();
+    const notifications = await listNotifications({ userId, city, limit: safeLimit });
 
     res.json({ notifications });
   } catch (err) {

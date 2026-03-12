@@ -1,6 +1,10 @@
 import { API_BASE } from "@/config/api";
 
-export async function sendToAI(message: string, userId: string, sessionId: string) {
+export async function sendToAI(
+  message: string,
+  userId: string,
+  sessionId: string
+) {
   const res = await fetch(`${API_BASE}/api/ai/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

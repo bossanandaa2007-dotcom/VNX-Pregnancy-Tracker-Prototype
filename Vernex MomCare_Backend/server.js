@@ -10,11 +10,28 @@ const diaryRoutes = require("./routes/diaryRoutes");
 const pregnancyRoutes = require("./routes/pregnancyRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const appointmentRoutes = require("./routes/appointmentRoutes");
-
+const guideRoutes = require("./routes/guides");
+const approvalRoutes = require("./routes/approvalRoutes");
+const Guide = require("./models/Guide");
+const guideDataset = require("./data/guideDataset");
 const app = express();
 
 // 1) Connect DB
-connectDB();
+connectDB()
+  .then(async () => {
+    try {
+      const count = await Guide.countDocuments();
+      if (count === 0) {
+        await Guide.insertMany(guideDataset);
+        console.log("Guide dataset seeded (empty DB).");
+      }
+    } catch (err) {
+      console.error("Guide seed error:", err?.message || err);
+    }
+  })
+  .catch((err) => {
+    console.error("DB init error:", err?.message || err);
+  });
 
 // 2) Middleware
 app.use(
@@ -38,6 +55,10 @@ app.use("/api/diary", diaryRoutes);
 app.use("/api/pregnancy", pregnancyRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/guides", guideRoutes);
+app.use("/api/auth/guides", guideRoutes);
+app.use("/api/approvals", approvalRoutes);
+app.use("/api/auth/approvals", approvalRoutes);
 
 // 4) 404 handler (optional but good)
 app.use((req, res) => {

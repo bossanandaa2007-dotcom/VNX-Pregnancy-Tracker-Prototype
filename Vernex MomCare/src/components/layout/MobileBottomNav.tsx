@@ -1,12 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, BarChart3, MessageCircle, Library, User } from 'lucide-react';
+import { Home, BarChart3, MessageCircle, NotebookPen, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const items = [
   { label: 'Home', icon: Home, path: '/dashboard' },
   { label: 'Analytics', icon: BarChart3, path: '/analytics' },
   { label: 'Chat', icon: MessageCircle, path: '/chat' },
-  { label: 'Library', icon: Library, path: '/library' },
+  { label: 'Diary', icon: NotebookPen, path: '/diary' },
   { label: 'Profile', icon: User, path: '/profile' },
 ];
 

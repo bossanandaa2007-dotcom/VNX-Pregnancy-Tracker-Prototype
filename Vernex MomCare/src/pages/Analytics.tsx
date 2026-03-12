@@ -49,8 +49,8 @@ export default function Analytics() {
   const { patientId } = useParams();
   const navigate = useNavigate();
 
-  const isDoctor = user?.role === 'doctor';
-  const isDoctorView = isDoctor && !!patientId;
+  const isPatient = user?.role === 'patient';
+  const isReadOnlyView = !isPatient && !!patientId;
 
   /* ---------------- DAILY UI STATE ---------------- */
   const [waterGlasses, setWaterGlasses] = useState(3);
@@ -102,7 +102,7 @@ export default function Analytics() {
   });
 
   const handleAddSymptom = () => {
-    if (isDoctorView) return;
+    if (isReadOnlyView) return;
     if (!symptomForm.date || !symptomForm.symptom) return;
 
     setSymptoms((prev) => [
@@ -125,15 +125,15 @@ export default function Analytics() {
     <DashboardLayout>
       <div className="space-y-6">
 
-        {/* Doctor Back Button */}
-        {isDoctorView && (
+        {/* Back Button for read-only patient analytics view (doctor/admin) */}
+        {isReadOnlyView && (
           <Button
             variant="ghost"
             className="flex items-center gap-2"
-            onClick={() => navigate('/doctor/analytics')}
+            onClick={() => navigate(-1)}
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to Patient List
+            Back
           </Button>
         )}
 
@@ -141,7 +141,7 @@ export default function Analytics() {
         <div>
           <h1 className="text-2xl font-bold">Health Analytics</h1>
           <p className="text-muted-foreground">
-            {isDoctorView
+            {isReadOnlyView
               ? 'Read-only view of patient health metrics'
               : 'Track your pregnancy health journey'}
           </p>
@@ -168,7 +168,7 @@ export default function Analytics() {
               </div>
               <p className="text-sm">{waterGlasses} / {waterGoal} glasses</p>
               <Progress value={(waterGlasses / waterGoal) * 100} />
-              {!isDoctorView && (
+              {!isReadOnlyView && (
                 <Button
                   size="sm"
                   className="w-full"
@@ -227,7 +227,7 @@ export default function Analytics() {
             {(['great', 'good', 'okay', 'low'] as const).map((mood) => (
               <Button
                 key={mood}
-                disabled={isDoctorView}
+                disabled={isReadOnlyView}
                 variant={todayMood === mood ? 'default' : 'outline'}
                 onClick={() => setTodayMood(mood)}
                 className="capitalize"
@@ -305,7 +305,7 @@ export default function Analytics() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Recent Symptoms</CardTitle>
-            {!isDoctorView && (
+            {!isReadOnlyView && (
               <Button size="sm" className="gap-2" onClick={() => setOpenSymptomModal(true)}>
                 <Plus className="h-4 w-4" />
                 Add Symptom

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const User = require('../models/User');
 const Patient = require('../models/Patient');
+const ApprovalRequest = require('../models/ApprovalRequest');
 
 const {
   login,
@@ -94,6 +95,7 @@ router.put('/patient/:patientId', async (req, res) => {
       pregnancyStartDate,
       husbandName,
       husbandPhone,
+      medicalNotes,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -134,6 +136,10 @@ router.put('/patient/:patientId', async (req, res) => {
 
     if (typeof husbandPhone === 'string') {
       patient.husbandPhone = husbandPhone.trim();
+    }
+
+    if (typeof medicalNotes === 'string') {
+      patient.medicalNotes = medicalNotes.trim();
     }
 
     if (pregnancyStartDate) {
@@ -215,6 +221,34 @@ router.get('/doctor/patients/:doctorId', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch patients',
+    });
+  }
+});
+
+// Get approval history for a doctor (kept in auth routes for compatibility)
+router.get('/doctor/:doctorId/approval-history', async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    const requests = await ApprovalRequest.find({
+      $or: [
+        { requestedBy: doctorId },
+        { targetKey: doctorId },
+        { 'payload.doctorId': doctorId },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      requests,
+    });
+  } catch (error) {
+    console.error('Fetch doctor approval history error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch approval history',
     });
   }
 });

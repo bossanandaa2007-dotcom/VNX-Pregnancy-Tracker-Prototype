@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import {
+  BookOpen,
+  Library,
   NotebookPen,
   Stethoscope,
   Hospital,
@@ -26,10 +28,12 @@ export function MobileSideDrawer({ open, onClose, onEmergency }: Props) {
   if (!open) return null;
 
   const items = [
-    { label: 'Diary', icon: NotebookPen, path: '/diary' },
+    { label: 'Appointments', icon: CalendarDays, path: '/appointments' },
+    { label: 'Guide', icon: BookOpen, path: '/guide' },
+    { label: 'Library', icon: Library, path: '/library' },
     { label: 'Doctor Details', icon: Stethoscope, path: '/doctorinfo' },
     { label: 'Hospital Details', icon: Hospital, path: '/hospitalinfo' },
-    { label: 'Appointments', icon: CalendarDays, path: '/appointments' },
+    
   ];
 
   return (

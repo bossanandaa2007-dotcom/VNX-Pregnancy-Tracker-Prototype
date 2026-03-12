@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BarChart3, MessageCircle, CalendarDays, User } from 'lucide-react';
+import { LayoutDashboard, MessageCircle, CalendarDays, User, BookOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchUnreadCount } from '@/lib/doctorChat';
 
@@ -28,7 +28,6 @@ export function DoctorBottomNav() {
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background lg:hidden">
       <div className="flex justify-around py-3">
         <BottomItem to="/dashboard" icon={LayoutDashboard} />
-        <BottomItem to="/doctor/analytics" icon={BarChart3} />
 
         <div className="relative">
           <BottomItem to="/doctor/chat" icon={MessageCircle} />
@@ -47,6 +46,7 @@ export function DoctorBottomNav() {
         </div>
 
         <BottomItem to="/doctor/appointments" icon={CalendarDays} />
+        <BottomItem to="/guide" icon={BookOpen} />
         <BottomItem to="/doctor/profile" icon={User} />
       </div>
     </nav>

@@ -54,9 +54,15 @@ export interface Article {
 }
 
 export interface GuideItem {
-  id: string;
+  id?: string;
+  _id?: string;
   title: string;
   category: 'diet' | 'exercise' | 'wellness' | 'dos' | 'donts';
   content: string;
-  icon: string;
+  icon?: string;
+  source?: 'WHO' | 'MOHFW';
+  referenceLink?: string;
+  weekStart?: number;
+  weekEnd?: number;
+  trimester?: 'first' | 'second' | 'third' | 'all';
 }

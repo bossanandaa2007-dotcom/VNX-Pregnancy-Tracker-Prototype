@@ -91,20 +91,24 @@ router.post("/send", async (req, res) => {
 // Fetch thread between two users
 router.get("/thread", async (req, res) => {
   try {
-    const { userId, peerId } = req.query;
+    const { userId, peerId, readonly } = req.query;
     if (!isValidObjectId(userId) || !isValidObjectId(peerId)) {
       return res.status(400).json({ success: false, message: "Invalid user/peer id" });
     }
 
+    const isReadonly = String(readonly || "").toLowerCase() === "true";
+
     // Mark incoming messages as read when this thread is opened/refreshed.
-    await Message.updateMany(
-      {
-        senderId: asObjectId(peerId),
-        receiverId: asObjectId(userId),
-        readAt: null,
-      },
-      { $set: { readAt: new Date() } }
-    );
+    if (!isReadonly) {
+      await Message.updateMany(
+        {
+          senderId: asObjectId(peerId),
+          receiverId: asObjectId(userId),
+          readAt: null,
+        },
+        { $set: { readAt: new Date() } }
+      );
+    }
 
     const messages = await Message.find({
       $or: [

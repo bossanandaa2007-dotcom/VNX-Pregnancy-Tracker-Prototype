@@ -7,6 +7,7 @@ import {
   CalendarDays,
   User,
   Library,
+  BookOpen,
   LogOut,
   Heart,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ const navItems: NavItem[] = [
   { icon: BarChart3, label: 'Analytics', path: '/doctor/analytics' },
   { icon: MessageCircle, label: 'Chat', path: '/doctor/chat', showBadge: true },
   { icon: CalendarDays, label: 'Appointments', path: '/doctor/appointments' },
+  { icon: BookOpen, label: 'Guide', path: '/guide' },
   { icon: Library, label: 'Library', path: '/library' },
   { icon: User, label: 'Profile', path: '/doctor/profile' },
 ];

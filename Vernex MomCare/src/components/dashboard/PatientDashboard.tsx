@@ -674,6 +674,14 @@ export function PatientDashboard() {
     reminderForm.notifyMeridiemInput,
   ]);
 
+  useEffect(() => {
+    return () => {
+      if (mobileHourScrollTimeoutRef.current) window.clearTimeout(mobileHourScrollTimeoutRef.current);
+      if (mobileMinuteScrollTimeoutRef.current) window.clearTimeout(mobileMinuteScrollTimeoutRef.current);
+      if (mobileMeridiemScrollTimeoutRef.current) window.clearTimeout(mobileMeridiemScrollTimeoutRef.current);
+    };
+  }, []);
+
   const handleMobilePickerScroll = (
     ref: React.RefObject<HTMLDivElement>,
     timeoutRef: React.MutableRefObject<number | null>,
@@ -1529,10 +1537,3 @@ export function PatientDashboard() {
     </div>
   );
 }
-  useEffect(() => {
-    return () => {
-      if (mobileHourScrollTimeoutRef.current) window.clearTimeout(mobileHourScrollTimeoutRef.current);
-      if (mobileMinuteScrollTimeoutRef.current) window.clearTimeout(mobileMinuteScrollTimeoutRef.current);
-      if (mobileMeridiemScrollTimeoutRef.current) window.clearTimeout(mobileMeridiemScrollTimeoutRef.current);
-    };
-  }, []);

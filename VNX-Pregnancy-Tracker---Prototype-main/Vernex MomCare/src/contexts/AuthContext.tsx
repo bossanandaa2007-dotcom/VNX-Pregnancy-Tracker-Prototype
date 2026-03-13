@@ -5,7 +5,7 @@ import { API_BASE } from "@/config/api";
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string, role: UserRole) => Promise<void>;
+  login: (email: string, password: string, role: UserRole) => Promise<User>;
   logout: () => void;
   updateUser: (patch: Partial<User> & Record<string, any>) => void;
 }
@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const login = async (email: string, password: string, role: UserRole) => {
+  const login = async (email: string, password: string, role: UserRole): Promise<User> => {
     try {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       /* ================= ADMIN ================= */
       if (data.role === 'admin') {
-        const nextUser = {
+        const nextUser: User = {
           id: 'admin',
           name: 'Admin',
           email: email,
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         setUser(nextUser);
         localStorage.setItem('vnx_user', JSON.stringify(nextUser));
-        return;
+        return nextUser;
       }
 
       /* ================= DOCTOR / PATIENT ================= */
@@ -86,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setUser(nextUser);
       localStorage.setItem('vnx_user', JSON.stringify(nextUser));
+      return nextUser as User;
     } catch (error: any) {
       console.error('Login error:', error);
       throw error;

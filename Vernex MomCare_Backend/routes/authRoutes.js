@@ -34,6 +34,7 @@ router.get('/admin/doctors', async (req, res) => {
           email: doctor.email,
           specialty: doctor.specialty,
           phone: doctor.phone,
+          profilePhoto: doctor.profilePhoto || '',
           patientCount,
         };
       })
@@ -61,7 +62,7 @@ router.get('/patient/:patientId', async (req, res) => {
     const { patientId } = req.params;
     const patient = await Patient.findById(patientId)
       .select('-password')
-      .populate('doctorId', 'name email specialty phone');
+      .populate('doctorId', 'name email specialty phone profilePhoto');
 
     if (!patient) {
       return res.status(404).json({
@@ -96,6 +97,8 @@ router.put('/patient/:patientId', async (req, res) => {
       husbandName,
       husbandPhone,
       medicalNotes,
+      profilePhoto,
+      clearProfilePhoto,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -142,6 +145,14 @@ router.put('/patient/:patientId', async (req, res) => {
       patient.medicalNotes = medicalNotes.trim();
     }
 
+    if (clearProfilePhoto) {
+      patient.profilePhoto = '';
+    }
+
+    if (typeof profilePhoto === 'string') {
+      patient.profilePhoto = profilePhoto.trim();
+    }
+
     if (pregnancyStartDate) {
       const start = new Date(pregnancyStartDate);
       if (!Number.isNaN(start.getTime())) {
@@ -159,7 +170,7 @@ router.put('/patient/:patientId', async (req, res) => {
 
     await patient.save();
 
-    await patient.populate('doctorId', 'name email specialty phone');
+    await patient.populate('doctorId', 'name email specialty phone profilePhoto');
     const safePatient = patient.toObject();
     delete safePatient.password;
 
@@ -183,7 +194,7 @@ router.get('/patient/by-email/:email', async (req, res) => {
     const email = decodeURIComponent(req.params.email);
     const patient = await Patient.findOne({ email })
       .select('-password')
-      .populate('doctorId', 'name email specialty phone');
+      .populate('doctorId', 'name email specialty phone profilePhoto');
 
     if (!patient) {
       return res.status(404).json({
@@ -266,6 +277,8 @@ router.put('/doctor/:doctorId', async (req, res) => {
       experience,
       hospital,
       location,
+      profilePhoto,
+      clearProfilePhoto,
     } = req.body;
 
     const doctor = await User.findById(doctorId);
@@ -294,6 +307,8 @@ router.put('/doctor/:doctorId', async (req, res) => {
     if (typeof experience === 'string') doctor.experience = experience.trim();
     if (typeof hospital === 'string') doctor.hospital = hospital.trim();
     if (typeof location === 'string') doctor.location = location.trim();
+    if (clearProfilePhoto) doctor.profilePhoto = '';
+    if (typeof profilePhoto === 'string') doctor.profilePhoto = profilePhoto.trim();
 
     await doctor.save();
 

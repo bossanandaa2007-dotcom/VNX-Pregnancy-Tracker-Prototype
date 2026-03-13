@@ -6,6 +6,7 @@ export interface User {
   name: string;
   role: UserRole;
   avatar?: string;
+  profilePhoto?: string;
 }
 
 export interface Patient {
@@ -13,6 +14,7 @@ export interface Patient {
   name: string;
   email: string;
   age: number;
+  profilePhoto?: string;
   pregnancyStartDate: Date;
   gestationalWeek: number;
   contactPhone: string;

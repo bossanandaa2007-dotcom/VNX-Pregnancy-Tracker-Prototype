@@ -21,9 +21,10 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from 'lucide-react';
 import { Appointment, AppointmentStatus } from '@/types/appointment';
-import { API_BASE } from "@/config/api";
+import { API_BASE } from '@/config/api';
 
 type AppointmentApiShape = {
   _id?: string;
@@ -35,8 +36,33 @@ type AppointmentApiShape = {
   date?: string;
   time?: string;
   notes?: string;
+  patientNotes?: string;
+  doctorNotes?: string;
   status?: AppointmentStatus;
+  completedAt?: string | null;
 };
+
+const parseAppointmentDateTime = (appointment: Pick<Appointment, 'date' | 'time'>) => {
+  if (!appointment.date || !appointment.time) return null;
+
+  const [timePart, meridiem] = appointment.time.trim().split(' ');
+  if (!timePart || !meridiem) return null;
+
+  const [hoursText, minutesText] = timePart.split(':');
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  let normalizedHours = hours % 12;
+  if (meridiem.toUpperCase() === 'PM') normalizedHours += 12;
+
+  const value = new Date(`${appointment.date}T00:00:00`);
+  value.setHours(normalizedHours, minutes, 0, 0);
+  return value;
+};
+
+const isAwaitingDoctorNotes = (appointment: Appointment, now: Date) =>
+  appointment.status === 'approved' && !appointment.doctorNotes && !!parseAppointmentDateTime(appointment) && parseAppointmentDateTime(appointment)!.getTime() <= now.getTime();
 
 type PatientApiShape = {
   _id?: string;
@@ -59,16 +85,64 @@ const mapAppointment = (appt: AppointmentApiShape): Appointment => ({
   doctorId: appt.doctorId,
   date: appt.date || '',
   time: appt.time || '',
-  notes: appt.notes || '',
+  notes: appt.patientNotes || appt.notes || '',
+  patientNotes: appt.patientNotes || appt.notes || '',
+  doctorNotes: appt.doctorNotes || '',
   status: appt.status || 'pending',
+  completedAt: appt.completedAt || null,
 });
 
-const statusClass = (status: AppointmentStatus) => {
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback;
+
+const statusClass = (status: AppointmentStatus | 'awaiting_notes') => {
   if (status === 'approved') return 'text-success';
   if (status === 'pending') return 'text-warning';
   if (status === 'completed') return 'text-primary';
+  if (status === 'awaiting_notes') return 'text-warning';
   return 'text-destructive';
 };
+
+const getStatusLabel = (appointment: Appointment, now: Date) => {
+  if (isAwaitingDoctorNotes(appointment, now)) return 'Awaiting doctor notes';
+  if (appointment.status === 'completed') return 'Completed';
+  if (appointment.status === 'approved') return 'Approved';
+  if (appointment.status === 'pending') return 'Pending';
+  return 'Rejected';
+};
+
+function EmptyCard({ text }: { text: string }) {
+  return (
+    <Card>
+      <CardContent className="p-5 text-sm text-muted-foreground">{text}</CardContent>
+    </Card>
+  );
+}
+
+function AppointmentSummary({ appointment }: { appointment: Appointment }) {
+  return (
+    <div className="space-y-1">
+      <p className="flex items-center gap-2 font-medium">
+        <User className="h-4 w-4 text-primary" />
+        {appointment.doctorName}
+      </p>
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <CalendarDays className="h-4 w-4" />
+        {appointment.date}
+      </p>
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Clock className="h-4 w-4" />
+        {appointment.time}
+      </p>
+      {appointment.patientNotes && (
+        <p className="text-xs text-muted-foreground">Your note: {appointment.patientNotes}</p>
+      )}
+      {appointment.doctorNotes && (
+        <p className="text-xs text-muted-foreground">Doctor note: {appointment.doctorNotes}</p>
+      )}
+    </div>
+  );
+}
 
 export default function Appointments() {
   const { user } = useAuth();
@@ -81,6 +155,7 @@ export default function Appointments() {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const currentDateTime = new Date();
 
   const now = new Date();
   const [currentMonth, setCurrentMonth] = useState(now.getMonth());
@@ -127,11 +202,11 @@ export default function Appointments() {
             }
           }
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Appointments fetch error:', error);
         toast({
           title: 'Error',
-          description: error?.message || 'Unable to load appointments',
+          description: getErrorMessage(error, 'Unable to load appointments'),
           variant: 'destructive',
         });
       } finally {
@@ -173,6 +248,43 @@ export default function Appointments() {
     [appointments, selectedDate]
   );
 
+  const pendingAppointments = useMemo(
+    () => appointments.filter((appt) => appt.status === 'pending'),
+    [appointments]
+  );
+
+  const activeAppointments = useMemo(
+    () => {
+      const evaluationTime = new Date();
+      return (
+      appointments.filter(
+        (appt) =>
+          appt.status !== 'pending' &&
+          appt.status !== 'completed' &&
+          appt.status !== 'rejected' &&
+          !isAwaitingDoctorNotes(appt, evaluationTime)
+      )
+      );
+    },
+    [appointments]
+  );
+
+  const awaitingDoctorNotesAppointments = useMemo(
+    () => {
+      const evaluationTime = new Date();
+      return appointments.filter((appt) => isAwaitingDoctorNotes(appt, evaluationTime));
+    },
+    [appointments]
+  );
+
+  const historyAppointments = useMemo(
+    () =>
+      appointments
+        .filter((appt) => appt.status === 'completed' && appt.doctorNotes)
+        .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
+    [appointments]
+  );
+
   const handleBookAppointment = async () => {
     if (!user?.id || !form.date || !form.time) return;
     setSubmitting(true);
@@ -207,11 +319,11 @@ export default function Appointments() {
         title: 'Request sent',
         description: 'Appointment request sent to your doctor',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Book appointment error:', error);
       toast({
         title: 'Booking failed',
-        description: error?.message || 'Unable to book appointment',
+        description: getErrorMessage(error, 'Unable to book appointment'),
         variant: 'destructive',
       });
     } finally {
@@ -222,83 +334,126 @@ export default function Appointments() {
   return (
     <DashboardLayout>
       <div className="max-w-4xl space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold">Appointments</h1>
-            <p className="text-muted-foreground">View and manage your doctor appointments</p>
-            {loading && <p className="text-xs text-muted-foreground mt-1">Loading appointments...</p>}
-          </div>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="flex flex-col gap-4 p-5 sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold">Appointments</h1>
+              <p className="text-muted-foreground">View and manage your doctor appointments</p>
+              {loading && <p className="mt-1 text-xs text-muted-foreground">Loading appointments...</p>}
+            </div>
 
-          <div className="flex gap-2">
-            <Button
-              variant={view === 'list' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setView('list')}
-              className="gap-2"
-            >
-              <List className="h-4 w-4" />
-              List
-            </Button>
-            <Button
-              variant={view === 'calendar' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setView('calendar')}
-              className="gap-2"
-            >
-              <Calendar className="h-4 w-4" />
-              Calendar
-            </Button>
-            <Button onClick={() => setOpen(true)} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Book
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={view === 'list' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setView('list')}
+                className="gap-2"
+              >
+                <List className="h-4 w-4" />
+                List
+              </Button>
+              <Button
+                variant={view === 'calendar' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setView('calendar')}
+                className="gap-2"
+              >
+                <Calendar className="h-4 w-4" />
+                Calendar
+              </Button>
+              <Button onClick={() => setOpen(true)} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Book
+              </Button>
+            </div>
           </div>
         </div>
 
         {view === 'list' && (
-          <div className="space-y-4">
-            {appointments.length === 0 ? (
-              <Card>
-                <CardContent className="p-5 text-sm text-muted-foreground">
-                  No appointments found.
-                </CardContent>
-              </Card>
-            ) : (
-              appointments.map((appt) => (
-                <Card key={String(appt.id)}>
-                  <CardContent className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5">
-                    <div className="space-y-1">
-                      <p className="font-medium flex items-center gap-2">
-                        <User className="h-4 w-4 text-primary" />
-                        {appt.doctorName}
-                      </p>
-                      <p className="text-sm text-muted-foreground flex items-center gap-2">
-                        <CalendarDays className="h-4 w-4" />
-                        {appt.date}
-                      </p>
-                      <p className="text-sm text-muted-foreground flex items-center gap-2">
-                        <Clock className="h-4 w-4" />
-                        {appt.time}
-                      </p>
-                      {!!appt.notes && (
-                        <p className="text-xs text-muted-foreground">Notes: {appt.notes}</p>
-                      )}
-                    </div>
+          <div className="space-y-8">
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Pending Request Appointments</h2>
 
-                    <span className={`text-xs font-medium capitalize ${statusClass(appt.status)}`}>
-                      {appt.status}
-                    </span>
-                  </CardContent>
-                </Card>
-              ))
-            )}
+              {pendingAppointments.length === 0 ? (
+                <EmptyCard text="Pending appointment requests will appear here." />
+              ) : (
+                pendingAppointments.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                      <AppointmentSummary appointment={appt} />
+                      <span className="text-xs font-medium text-warning">Pending</span>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Upcoming Appointments</h2>
+
+              {activeAppointments.length === 0 ? (
+                <EmptyCard text="No approved upcoming appointments found." />
+              ) : (
+                activeAppointments.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                      <AppointmentSummary appointment={appt} />
+                      <span
+                        className={`text-xs font-medium ${statusClass(
+                          isAwaitingDoctorNotes(appt, currentDateTime) ? 'awaiting_notes' : appt.status
+                        )}`}
+                      >
+                        {getStatusLabel(appt, currentDateTime)}
+                      </span>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Awaiting Doctor Notes</h2>
+
+              {awaitingDoctorNotesAppointments.length === 0 ? (
+                <EmptyCard text="Completed appointments waiting for doctor notes will appear here." />
+              ) : (
+                awaitingDoctorNotesAppointments.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                      <AppointmentSummary appointment={appt} />
+                      <span className="text-xs font-medium text-warning">Awaiting doctor notes</span>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">History</h2>
+
+              {historyAppointments.length === 0 ? (
+                <EmptyCard text="Completed appointments with doctor notes will appear here." />
+              ) : (
+                historyAppointments.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
+                      <AppointmentSummary appointment={appt} />
+                      <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                        <FileText className="h-4 w-4" />
+                        History
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </section>
           </div>
         )}
 
         {view === 'calendar' && (
           <Card>
             <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-4">
+              <div className="mb-4 flex items-center justify-between">
                 <Button variant="outline" size="sm" onClick={goPrevMonth}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
@@ -341,14 +496,25 @@ export default function Appointments() {
                     <p className="text-xs text-muted-foreground">No appointments on this day.</p>
                   ) : (
                     appointmentsByDate.map((appt) => (
-                      <div
-                        key={String(appt.id)}
-                        className="rounded-lg bg-accent/40 p-3 text-sm flex justify-between"
-                      >
-                        <span>
-                          {appt.time} · {appt.doctorName}
-                        </span>
-                        <span className="capitalize text-xs">{appt.status}</span>
+                      <div key={String(appt.id)} className="space-y-2 rounded-lg bg-accent/40 p-3 text-sm">
+                        <div className="flex justify-between gap-3">
+                          <span>
+                            {appt.time} · {appt.doctorName}
+                          </span>
+                          <span
+                            className={`text-xs ${statusClass(
+                              isAwaitingDoctorNotes(appt, currentDateTime) ? 'awaiting_notes' : appt.status
+                            )}`}
+                          >
+                            {getStatusLabel(appt, currentDateTime)}
+                          </span>
+                        </div>
+                        {appt.patientNotes && (
+                          <p className="text-xs text-muted-foreground">Your note: {appt.patientNotes}</p>
+                        )}
+                        {appt.doctorNotes && (
+                          <p className="text-xs text-muted-foreground">Doctor note: {appt.doctorNotes}</p>
+                        )}
                       </div>
                     ))
                   )}

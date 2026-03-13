@@ -3,10 +3,16 @@ import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, MessageCircle, CalendarDays, User, BookOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchUnreadCount } from '@/lib/doctorChat';
+import { API_BASE } from '@/config/api';
+
+type AppointmentApiShape = {
+  status?: string;
+};
 
 export function DoctorBottomNav() {
   const { user } = useAuth();
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [pendingAppointmentCount, setPendingAppointmentCount] = useState(0);
 
   useEffect(() => {
     const loadUnread = async () => {
@@ -24,6 +30,30 @@ export function DoctorBottomNav() {
     return () => clearInterval(id);
   }, [user?.id]);
 
+  useEffect(() => {
+    const loadPendingAppointments = async () => {
+      if (!user?.id || user.role !== 'doctor') return;
+      try {
+        const res = await fetch(`${API_BASE}/api/appointments/doctor/${user.id}`);
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.message || 'Failed to fetch appointments');
+        }
+
+        const pendingCount = (data.appointments || []).filter(
+          (appointment: AppointmentApiShape) => appointment.status === 'pending'
+        ).length;
+        setPendingAppointmentCount(pendingCount);
+      } catch (err) {
+        console.error('Pending appointment count error:', err);
+      }
+    };
+
+    loadPendingAppointments();
+    const id = setInterval(loadPendingAppointments, 4000);
+    return () => clearInterval(id);
+  }, [user?.id, user?.role]);
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background lg:hidden">
       <div className="flex justify-around py-3">
@@ -34,7 +64,7 @@ export function DoctorBottomNav() {
           {unreadChatCount > 0 && (
             <span
               className="
-              absolute -top-1 -right-2
+              absolute bottom-0 right-1
               flex h-4 min-w-[16px] items-center justify-center
               rounded-full bg-primary
               text-[10px] font-medium text-primary-foreground
@@ -45,7 +75,21 @@ export function DoctorBottomNav() {
           )}
         </div>
 
-        <BottomItem to="/doctor/appointments" icon={CalendarDays} />
+        <div className="relative">
+          <BottomItem to="/doctor/appointments" icon={CalendarDays} />
+          {pendingAppointmentCount > 0 && (
+            <span
+              className="
+              absolute bottom-0 right-1
+              flex h-4 min-w-[16px] items-center justify-center
+              rounded-full bg-primary
+              text-[10px] font-medium text-primary-foreground
+            "
+            >
+              {pendingAppointmentCount}
+            </span>
+          )}
+        </div>
         <BottomItem to="/guide" icon={BookOpen} />
         <BottomItem to="/doctor/profile" icon={User} />
       </div>

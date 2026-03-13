@@ -1,9 +1,16 @@
-import { useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
@@ -17,6 +24,8 @@ import {
   MapPin,
   ArrowLeft,
   Save,
+  Camera,
+  Trash2,
 } from 'lucide-react';
 
 type DoctorProfileShape = {
@@ -30,6 +39,7 @@ type DoctorProfileShape = {
   experience?: string;
   hospital?: string;
   location?: string;
+  profilePhoto?: string;
 };
 
 const emptyDoctorProfile = {
@@ -43,15 +53,45 @@ const emptyDoctorProfile = {
   location: '',
 };
 
+const MAX_PROFILE_IMAGE_DIMENSION = 1200;
+const PROFILE_IMAGE_QUALITY = 0.78;
+
+const resizeImageDataUrl = (source: string) =>
+  new Promise<string>((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => {
+      const scale = Math.min(
+        1,
+        MAX_PROFILE_IMAGE_DIMENSION / Math.max(image.width || 1, image.height || 1)
+      );
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((image.width || 1) * scale));
+      canvas.height = Math.max(1, Math.round((image.height || 1) * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        reject(new Error('Image processing unavailable'));
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', PROFILE_IMAGE_QUALITY));
+    };
+    image.onerror = () => reject(new Error('Image load failed'));
+    image.src = source;
+  });
+
 export default function DoctorEditProfile() {
   const { user, updateUser } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [doctorId, setDoctorId] = useState('');
+  const [doctorProfile, setDoctorProfile] = useState<DoctorProfileShape | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingProfilePhoto, setPendingProfilePhoto] = useState<string | null>(null);
+  const [removeProfilePhoto, setRemoveProfilePhoto] = useState(false);
   const [form, setForm] = useState(emptyDoctorProfile);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadDoctorProfile = async () => {
@@ -66,6 +106,9 @@ export default function DoctorEditProfile() {
         }
 
         const doctor = data.doctor as DoctorProfileShape;
+        setDoctorProfile(doctor);
+        setPendingProfilePhoto(null);
+        setRemoveProfilePhoto(false);
         setDoctorId((doctor._id || doctor.id || user.id) as string);
         setForm({
           name: doctor.name || user.name || '',
@@ -96,6 +139,36 @@ export default function DoctorEditProfile() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const profilePhoto = removeProfilePhoto
+    ? ''
+    : pendingProfilePhoto ?? doctorProfile?.profilePhoto ?? user?.profilePhoto ?? '';
+
+  const handlePhotoSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Unable to read image'));
+        reader.readAsDataURL(file);
+      });
+
+      const optimized = await resizeImageDataUrl(dataUrl);
+      setPendingProfilePhoto(optimized);
+      setRemoveProfilePhoto(false);
+    } catch (error: unknown) {
+      console.error('Doctor edit profile photo process error:', error);
+      toast({
+        title: 'Image failed',
+        description: error instanceof Error ? error.message : 'Unable to process selected image',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleSave = async () => {
     if (!doctorId) return;
     setSaving(true);
@@ -112,6 +185,8 @@ export default function DoctorEditProfile() {
           experience: form.experience.trim(),
           hospital: form.hospital.trim(),
           location: form.location.trim(),
+          profilePhoto: removeProfilePhoto ? '' : pendingProfilePhoto,
+          clearProfilePhoto: removeProfilePhoto,
         }),
       });
 
@@ -129,7 +204,11 @@ export default function DoctorEditProfile() {
         experience: data.doctor.experience,
         hospital: data.doctor.hospital,
         location: data.doctor.location,
+        profilePhoto: data.doctor.profilePhoto,
       });
+      setDoctorProfile(data.doctor as DoctorProfileShape);
+      setPendingProfilePhoto(null);
+      setRemoveProfilePhoto(false);
 
       toast({
         title: 'Saved',
@@ -168,6 +247,64 @@ export default function DoctorEditProfile() {
           </p>
           {loading && <p className="text-xs text-muted-foreground mt-1">Loading profile...</p>}
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Profile Photo</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <Avatar className="h-24 w-24 rounded-2xl bg-primary/10">
+              <AvatarImage src={profilePhoto} alt={form.name || user?.name || 'Doctor'} className="object-cover" />
+              <AvatarFallback className="rounded-2xl bg-primary/10">
+                <User className="h-10 w-10 text-primary" />
+              </AvatarFallback>
+            </Avatar>
+            <div className="space-y-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={handlePhotoSelect}
+              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" className="gap-2 rounded-xl" disabled={saving || loading}>
+                    <Camera className="h-4 w-4" />
+                    Edit Photo
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-44 rounded-xl">
+                  <DropdownMenuItem
+                    className="gap-2"
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Change Photo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 text-destructive focus:text-destructive"
+                    disabled={!profilePhoto}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      setPendingProfilePhoto(null);
+                      setRemoveProfilePhoto(true);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Remove Photo
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <p className="text-xs text-muted-foreground">
+                Changes to the photo will be saved only when you click Save Changes.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

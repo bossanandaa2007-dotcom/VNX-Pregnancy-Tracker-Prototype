@@ -2,16 +2,26 @@ import { useEffect, useMemo, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Appointment } from '@/types/appointment';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { API_BASE } from "@/config/api";
+import { API_BASE } from '@/config/api';
 import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  CheckCircle,
   Clock,
+  FileText,
 } from 'lucide-react';
 
 type AppointmentApiShape = {
@@ -24,7 +34,34 @@ type AppointmentApiShape = {
   date?: string;
   time?: string;
   notes?: string;
+  patientNotes?: string;
+  doctorNotes?: string;
   status?: Appointment['status'];
+  completedAt?: string | null;
+};
+
+const parseAppointmentDateTime = (appointment: Pick<Appointment, 'date' | 'time'>) => {
+  if (!appointment.date || !appointment.time) return null;
+
+  const [timePart, meridiem] = appointment.time.trim().split(' ');
+  if (!timePart || !meridiem) return null;
+
+  const [hoursText, minutesText] = timePart.split(':');
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  let normalizedHours = hours % 12;
+  if (meridiem.toUpperCase() === 'PM') normalizedHours += 12;
+
+  const value = new Date(`${appointment.date}T00:00:00`);
+  value.setHours(normalizedHours, minutes, 0, 0);
+  return value;
+};
+
+const hasAppointmentEnded = (appointment: Appointment, now: Date) => {
+  const appointmentDateTime = parseAppointmentDateTime(appointment);
+  return appointmentDateTime ? appointmentDateTime.getTime() <= now.getTime() : appointment.date < now.toISOString().slice(0, 10);
 };
 
 const formatMonth = (date: Date) =>
@@ -38,14 +75,42 @@ const mapAppointment = (appt: AppointmentApiShape): Appointment => ({
   doctorId: appt.doctorId,
   date: appt.date || '',
   time: appt.time || '',
-  notes: appt.notes || '',
+  notes: appt.patientNotes || appt.notes || '',
+  patientNotes: appt.patientNotes || appt.notes || '',
+  doctorNotes: appt.doctorNotes || '',
   status: appt.status || 'pending',
+  completedAt: appt.completedAt || null,
 });
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback;
+
+const getPatientNote = (appointment: Pick<Appointment, 'patientNotes' | 'notes'>) =>
+  appointment.patientNotes || appointment.notes || '';
 
 function EmptyPlaceholder({ text }: { text: string }) {
   return (
     <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
       {text}
+    </div>
+  );
+}
+
+function AppointmentMeta({ appointment }: { appointment: Appointment }) {
+  const patientNote = getPatientNote(appointment);
+
+  return (
+    <div className="space-y-1">
+      <p className="font-medium">{appointment.patientName}</p>
+      <p className="text-sm text-muted-foreground">
+        {appointment.date} · {appointment.time}
+      </p>
+      {patientNote && (
+        <p className="text-xs text-muted-foreground">Patient note: {patientNote}</p>
+      )}
+      {appointment.doctorNotes && (
+        <p className="text-xs text-muted-foreground">Doctor note: {appointment.doctorNotes}</p>
+      )}
     </div>
   );
 }
@@ -56,9 +121,13 @@ export default function DoctorAppointments() {
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [doctorNotesDraft, setDoctorNotesDraft] = useState('');
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -73,11 +142,11 @@ export default function DoctorAppointments() {
           throw new Error(data?.message || 'Unable to load appointments');
         }
         setAppointments((data.appointments || []).map(mapAppointment));
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Doctor appointments fetch error:', error);
         toast({
           title: 'Error',
-          description: error?.message || 'Unable to load appointments',
+          description: getErrorMessage(error, 'Unable to load appointments'),
           variant: 'destructive',
         });
       } finally {
@@ -88,10 +157,7 @@ export default function DoctorAppointments() {
     loadAppointments();
   }, [toast, user?.id, user?.role]);
 
-  const updateStatus = async (
-    id: string | number,
-    status: 'approved' | 'rejected' | 'completed'
-  ) => {
+  const updateStatus = async (id: string | number, status: 'approved' | 'rejected') => {
     try {
       const res = await fetch(`${API_BASE}/api/appointments/${id}/status`, {
         method: 'PUT',
@@ -110,24 +176,105 @@ export default function DoctorAppointments() {
         title: 'Updated',
         description: `Appointment marked as ${status}`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Appointment status update error:', error);
       toast({
         title: 'Update failed',
-        description: error?.message || 'Unable to update appointment status',
+        description: getErrorMessage(error, 'Unable to update appointment status'),
         variant: 'destructive',
       });
     }
   };
 
+  const openNotesModal = (appointment: Appointment) => {
+    setSelectedAppointment(appointment);
+    setDoctorNotesDraft(appointment.doctorNotes || '');
+    setNotesModalOpen(true);
+  };
+
+  const saveDoctorNotes = async () => {
+    if (!selectedAppointment) return;
+    const trimmedNotes = doctorNotesDraft.trim();
+    if (!trimmedNotes) {
+      toast({
+        title: 'Notes required',
+        description: 'Add visit notes before moving the appointment to history.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSavingNotes(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/appointments/${selectedAppointment.id}/doctor-notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doctorNotes: trimmedNotes }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || 'Unable to save doctor notes');
+      }
+
+      const updated = mapAppointment(data.appointment);
+      setAppointments((prev) =>
+        prev.map((a) => (String(a.id) === String(selectedAppointment.id) ? updated : a))
+      );
+      setNotesModalOpen(false);
+      setSelectedAppointment(null);
+      setDoctorNotesDraft('');
+
+      toast({
+        title: 'Notes saved',
+        description: 'Appointment moved to history.',
+      });
+    } catch (error: unknown) {
+      console.error('Doctor notes save error:', error);
+      toast({
+        title: 'Save failed',
+        description: getErrorMessage(error, 'Unable to save doctor notes'),
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
   const pending = useMemo(() => appointments.filter((a) => a.status === 'pending'), [appointments]);
   const todayAppointments = useMemo(
-    () => appointments.filter((a) => a.status === 'approved' && a.date === today),
+    () => {
+      const evaluationTime = new Date();
+      return appointments.filter(
+        (a) => a.status === 'approved' && a.date === today && !hasAppointmentEnded(a, evaluationTime)
+      );
+    },
     [appointments, today]
   );
   const upcoming = useMemo(
-    () => appointments.filter((a) => a.status === 'approved' && a.date > today),
+    () => {
+      const evaluationTime = new Date();
+      return appointments.filter(
+        (a) =>
+          a.status === 'approved' &&
+          (parseAppointmentDateTime(a)?.getTime() ?? Number.NEGATIVE_INFINITY) > evaluationTime.getTime() &&
+          a.date !== today
+      );
+    },
     [appointments, today]
+  );
+  const awaitingNotes = useMemo(
+    () => {
+      const evaluationTime = new Date();
+      return appointments.filter((a) => a.status === 'approved' && hasAppointmentEnded(a, evaluationTime));
+    },
+    [appointments]
+  );
+  const history = useMemo(
+    () =>
+      appointments
+        .filter((a) => a.status === 'completed' && a.doctorNotes)
+        .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
+    [appointments]
   );
 
   const year = currentMonth.getFullYear();
@@ -147,26 +294,28 @@ export default function DoctorAppointments() {
   return (
     <DashboardLayout>
       <div className="max-w-5xl space-y-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Appointments</h1>
-            <p className="text-muted-foreground">Manage patient appointment requests and schedules</p>
-            {loading && <p className="text-xs text-muted-foreground mt-1">Loading appointments...</p>}
-          </div>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="flex flex-col gap-4 p-5 sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold">Appointments</h1>
+              <p className="text-muted-foreground">Manage patient appointment requests and schedules</p>
+              {loading && <p className="mt-1 text-xs text-muted-foreground">Loading appointments...</p>}
+            </div>
 
-          <div className="flex gap-2">
-            <Button size="sm" variant={view === 'list' ? 'default' : 'outline'} onClick={() => setView('list')}>
-              List
-            </Button>
-            <Button
-              size="sm"
-              variant={view === 'calendar' ? 'default' : 'outline'}
-              onClick={() => setView('calendar')}
-              className="gap-2"
-            >
-              <CalendarDays className="h-4 w-4" />
-              Calendar
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant={view === 'list' ? 'default' : 'outline'} onClick={() => setView('list')}>
+                List
+              </Button>
+              <Button
+                size="sm"
+                variant={view === 'calendar' ? 'default' : 'outline'}
+                onClick={() => setView('calendar')}
+                className="gap-2"
+              >
+                <CalendarDays className="h-4 w-4" />
+                Calendar
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -178,14 +327,8 @@ export default function DoctorAppointments() {
               {pending.length > 0 ? (
                 pending.map((appt) => (
                   <Card key={String(appt.id)} className="border-l-4 border-primary">
-                    <CardContent className="p-5 flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">{appt.patientName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {appt.date} · {appt.time}
-                        </p>
-                        <p className="text-xs text-warning">Awaiting approval</p>
-                      </div>
+                    <CardContent className="flex items-center justify-between gap-4 p-5">
+                      <AppointmentMeta appointment={appt} />
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => updateStatus(appt.id, 'approved')}>
                           Approve
@@ -208,20 +351,9 @@ export default function DoctorAppointments() {
               {todayAppointments.length > 0 ? (
                 todayAppointments.map((appt) => (
                   <Card key={String(appt.id)}>
-                    <CardContent className="p-5 flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">{appt.patientName}</p>
-                        <p className="text-sm text-muted-foreground">{appt.time}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-2"
-                        onClick={() => updateStatus(appt.id, 'completed')}
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        Mark Completed
-                      </Button>
+                    <CardContent className="flex items-center justify-between gap-4 p-5">
+                      <AppointmentMeta appointment={appt} />
+                      <span className="text-xs text-muted-foreground">Add notes after the appointment is completed</span>
                     </CardContent>
                   </Card>
                 ))
@@ -236,19 +368,50 @@ export default function DoctorAppointments() {
               {upcoming.length > 0 ? (
                 upcoming.map((appt) => (
                   <Card key={String(appt.id)}>
-                    <CardContent className="p-5 flex items-center gap-3">
+                    <CardContent className="flex items-center gap-3 p-5">
                       <Clock className="h-5 w-5 text-primary" />
-                      <div>
-                        <p className="font-medium">{appt.patientName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {appt.date} · {appt.time}
-                        </p>
-                      </div>
+                      <AppointmentMeta appointment={appt} />
                     </CardContent>
                   </Card>
                 ))
               ) : (
                 <EmptyPlaceholder text="No upcoming appointments." />
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Awaiting Notes</h2>
+
+              {awaitingNotes.length > 0 ? (
+                awaitingNotes.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="flex items-center justify-between gap-4 p-5">
+                      <AppointmentMeta appointment={appt} />
+                      <Button size="sm" variant="outline" className="gap-2" onClick={() => openNotesModal(appt)}>
+                        <FileText className="h-4 w-4" />
+                        Add Notes
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <EmptyPlaceholder text="No completed visits are waiting for notes." />
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">History</h2>
+
+              {history.length > 0 ? (
+                history.map((appt) => (
+                  <Card key={String(appt.id)}>
+                    <CardContent className="p-5">
+                      <AppointmentMeta appointment={appt} />
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <EmptyPlaceholder text="No appointment history yet." />
               )}
             </section>
           </div>
@@ -272,7 +435,6 @@ export default function DoctorAppointments() {
               {Array.from({ length: daysInMonth }, (_, i) => {
                 const day = i + 1;
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
                 const hasAppt = !!appointmentsByDate[dateStr];
 
                 return (
@@ -280,7 +442,7 @@ export default function DoctorAppointments() {
                     key={day}
                     onClick={() => setSelectedDate(dateStr)}
                     className={`rounded-xl border p-3 text-sm transition ${
-                      hasAppt ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent'
+                      hasAppt ? 'bg-primary/10 font-medium text-primary' : 'hover:bg-accent'
                     } ${selectedDate === dateStr ? 'ring-2 ring-primary' : ''}`}
                   >
                     {day}
@@ -294,17 +456,33 @@ export default function DoctorAppointments() {
                 <p className="text-sm font-medium">Appointments on {selectedDate}</p>
 
                 {(appointmentsByDate[selectedDate] || []).length > 0 ? (
-                  (appointmentsByDate[selectedDate] || []).map((appt) => (
-                    <div
-                      key={String(appt.id)}
-                      className="rounded-lg bg-accent/40 p-3 flex justify-between text-sm"
-                    >
-                      <span>
-                        {appt.time} · {appt.patientName}
-                      </span>
-                      <span className="capitalize text-xs">{appt.status}</span>
+                  (appointmentsByDate[selectedDate] || []).map((appt) => {
+                    const patientNote = getPatientNote(appt);
+
+                    return (
+                    <div key={String(appt.id)} className="space-y-2 rounded-lg bg-accent/40 p-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>
+                          {appt.time} · {appt.patientName}
+                        </span>
+                        <span className="text-xs capitalize">{appt.status}</span>
+                      </div>
+                      {patientNote && (
+                        <p className="text-xs text-muted-foreground">Patient note: {patientNote}</p>
+                      )}
+                      {appt.doctorNotes && (
+                        <p className="text-xs text-muted-foreground">Doctor note: {appt.doctorNotes}</p>
+                      )}
+                      {appt.status === 'approved' && hasAppointmentEnded(appt, new Date()) && (
+                        <div>
+                          <Button size="sm" variant="outline" onClick={() => openNotesModal(appt)}>
+                            Add Notes
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <EmptyPlaceholder text="No appointments on this date." />
                 )}
@@ -313,6 +491,47 @@ export default function DoctorAppointments() {
           </div>
         )}
       </div>
+
+      <Dialog open={notesModalOpen} onOpenChange={setNotesModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Visit Notes</DialogTitle>
+            <DialogDescription>
+              Save the doctor notes after the consultation. The appointment moves to history only after this step.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedAppointment && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-accent/40 p-3 text-sm">
+                <p className="font-medium">{selectedAppointment.patientName}</p>
+                <p className="text-muted-foreground">
+                  {selectedAppointment.date} · {selectedAppointment.time}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="doctor-notes">Doctor notes</Label>
+                <Textarea
+                  id="doctor-notes"
+                  placeholder="Add consultation notes, next steps, or follow-up advice"
+                  value={doctorNotesDraft}
+                  onChange={(e) => setDoctorNotesDraft(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotesModalOpen(false)} disabled={savingNotes}>
+              Cancel
+            </Button>
+            <Button onClick={saveDoctorNotes} disabled={savingNotes}>
+              {savingNotes ? 'Saving...' : 'Save Notes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

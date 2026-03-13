@@ -6,6 +6,7 @@ const Patient = require("../models/Patient");
 const User = require("../models/User");
 
 const VALID_STATUSES = new Set(["pending", "approved", "rejected", "completed"]);
+const MUTABLE_STATUSES = new Set(["approved", "rejected"]);
 
 const toDateOnly = (value) => {
   const d = new Date(value);
@@ -25,7 +26,10 @@ const serializeAppointment = (appt) => {
     date: dateValue,
     time: appt.time || "",
     notes: appt.notes || "",
+    patientNotes: appt.notes || "",
+    doctorNotes: appt.doctorNotes || "",
     status: VALID_STATUSES.has(appt.status) ? appt.status : "pending",
+    completedAt: appt.completedAt || null,
     createdAt: appt.createdAt,
     updatedAt: appt.updatedAt,
   };
@@ -156,16 +160,16 @@ router.get("/doctor/:doctorId", async (req, res) => {
   }
 });
 
-// Doctor updates appointment status (approve / reject / complete).
+// Doctor updates appointment status (approve / reject).
 router.put("/:appointmentId/status", async (req, res) => {
   try {
     const { appointmentId } = req.params;
     const { status } = req.body;
 
-    if (!VALID_STATUSES.has(status)) {
+    if (!MUTABLE_STATUSES.has(status)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid status",
+        message: "Invalid status transition",
       });
     }
 
@@ -177,7 +181,17 @@ router.put("/:appointmentId/status", async (req, res) => {
       });
     }
 
+    if (appointment.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Completed appointments cannot be changed",
+      });
+    }
+
     appointment.status = status;
+    if (status !== "completed") {
+      appointment.completedAt = null;
+    }
     await appointment.save();
 
     await appointment.populate("patientId", "name email");
@@ -193,6 +207,70 @@ router.put("/:appointmentId/status", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to update appointment status",
+    });
+  }
+});
+
+// Doctor adds visit notes and moves the appointment to history.
+router.put("/:appointmentId/doctor-notes", async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const doctorNotes = typeof req.body?.doctorNotes === "string" ? req.body.doctorNotes.trim() : "";
+
+    if (!doctorNotes) {
+      return res.status(400).json({
+        success: false,
+        message: "Doctor notes are required",
+      });
+    }
+
+    const appointment = await Appointment.findById(appointmentId);
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    if (appointment.status === "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Rejected appointments cannot be completed",
+      });
+    }
+
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      {
+        $set: {
+          doctorNotes,
+          status: "completed",
+          completedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedAppointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    await updatedAppointment.populate("patientId", "name email");
+    await updatedAppointment.populate("doctorId", "name email specialty");
+
+    return res.status(200).json({
+      success: true,
+      message: "Doctor notes added",
+      appointment: serializeAppointment(updatedAppointment.toObject()),
+    });
+  } catch (error) {
+    console.error("Update appointment doctor notes error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save doctor notes",
     });
   }
 });

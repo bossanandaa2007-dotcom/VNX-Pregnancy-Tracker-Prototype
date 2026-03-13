@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,12 +6,21 @@ import { ArrowLeft, Users, LogOut, Stethoscope, CalendarClock, ShieldCheck } fro
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from '@/config/api';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Doctor {
   _id: string;
   name: string;
   email: string;
   specialty?: string;
+  profilePhoto?: string;
 }
 
 interface AppointmentHistory {
@@ -26,7 +35,7 @@ interface AppointmentHistory {
 
 interface ApprovalHistory {
   _id: string;
-  requestType: 'patient_create' | 'guide_update' | 'guide_delete';
+  requestType: 'patient_create' | 'guide_create' | 'guide_update' | 'guide_delete';
   status: 'pending' | 'approved' | 'rejected';
   requestNote?: string;
   adminNote?: string;
@@ -37,6 +46,7 @@ interface ApprovalHistory {
 
 const approvalTypeLabel: Record<ApprovalHistory['requestType'], string> = {
   patient_create: 'Patient Create',
+  guide_create: 'Guide Create',
   guide_update: 'Guide Edit',
   guide_delete: 'Guide Delete',
 };
@@ -52,6 +62,12 @@ export default function AdminDoctorProfile() {
   const [appointments, setAppointments] = useState<AppointmentHistory[]>([]);
   const [approvals, setApprovals] = useState<ApprovalHistory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeSection, setActiveSection] = useState<'appointments' | 'approvals' | null>(null);
+  const [appointmentStatusFilter, setAppointmentStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'completed'>('all');
+  const [appointmentSort, setAppointmentSort] = useState<'newest' | 'oldest'>('newest');
+  const [approvalStatusFilter, setApprovalStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [approvalTypeFilter, setApprovalTypeFilter] = useState<'all' | ApprovalHistory['requestType']>('all');
+  const [approvalSort, setApprovalSort] = useState<'newest' | 'oldest'>('newest');
 
   const parseErrorMessage = (data: any, fallback: string) =>
     data?.message || data?.error || fallback;
@@ -93,6 +109,33 @@ export default function AdminDoctorProfile() {
     () => [...appointments].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))),
     [appointments]
   );
+
+  const appointmentCount = appointments.length;
+  const approvalCount = approvals.length;
+
+  const filteredAppointments = useMemo(() => {
+    const rows = sortedAppointments.filter(
+      (item) => appointmentStatusFilter === 'all' || item.status === appointmentStatusFilter
+    );
+
+    return [...rows].sort((a, b) => {
+      const aTime = new Date(`${a.date || ''} ${a.time || ''}`).getTime();
+      const bTime = new Date(`${b.date || ''} ${b.time || ''}`).getTime();
+      return appointmentSort === 'newest' ? bTime - aTime : aTime - bTime;
+    });
+  }, [sortedAppointments, appointmentStatusFilter, appointmentSort]);
+
+  const filteredApprovals = useMemo(() => {
+    const rows = approvals
+      .filter((item) => approvalStatusFilter === 'all' || item.status === approvalStatusFilter)
+      .filter((item) => approvalTypeFilter === 'all' || item.requestType === approvalTypeFilter);
+
+    return [...rows].sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return approvalSort === 'newest' ? bTime - aTime : aTime - bTime;
+    });
+  }, [approvals, approvalStatusFilter, approvalTypeFilter, approvalSort]);
 
   useEffect(() => {
     if (!doctorId) return;
@@ -159,8 +202,8 @@ export default function AdminDoctorProfile() {
 
   return (
     <div className="min-h-screen bg-background p-6">
-      <div className="max-w-5xl mx-auto space-y-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl bg-primary/10 p-6">
+      <div className="mx-auto max-w-5xl space-y-8">
+        <div className="flex flex-col gap-4 rounded-2xl bg-primary/10 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-primary">Doctor Profile</h1>
             <p className="text-muted-foreground">View doctor details, appointments, and approvals</p>
@@ -180,11 +223,14 @@ export default function AdminDoctorProfile() {
         </div>
 
         <Card className="rounded-2xl">
-          <CardContent className="p-6 space-y-6">
+          <CardContent className="space-y-6 p-6">
             <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10">
-                <Stethoscope className="h-7 w-7 text-primary" />
-              </div>
+              <Avatar className="h-14 w-14 rounded-xl bg-primary/10">
+                <AvatarImage src={doctor.profilePhoto} alt={doctor.name} className="object-cover" />
+                <AvatarFallback className="rounded-xl bg-primary/10">
+                  <Stethoscope className="h-7 w-7 text-primary" />
+                </AvatarFallback>
+              </Avatar>
               <div>
                 <h2 className="text-xl font-semibold">{doctor.name}</h2>
                 <p className="text-sm text-muted-foreground">{doctor.specialty || '-'}</p>
@@ -211,71 +257,199 @@ export default function AdminDoctorProfile() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl">
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">Appointment History</h3>
-            </div>
-
-            {sortedAppointments.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No appointment history for this doctor.</p>
-            ) : (
-              <div className="space-y-3">
-                {sortedAppointments.map((a) => (
-                  <div key={a._id || a.id} className="rounded-xl border p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium">{a.patientName || 'Unknown patient'}</p>
-                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(a.status)}`}>
-                        {String(a.status || 'pending')}
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {a.date || '-'} {a.time ? `at ${a.time}` : ''}
-                    </p>
-                    {!!a.notes && <p className="text-sm mt-2">Notes: {a.notes}</p>}
-                  </div>
-                ))}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() =>
+              setActiveSection((current) => (current === 'appointments' ? null : 'appointments'))
+            }
+            className={`rounded-3xl border p-6 text-left transition-colors ${
+              activeSection === 'appointments'
+                ? 'border-primary/30 bg-primary/10'
+                : 'border-border bg-card hover:bg-accent/30'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-lg font-semibold text-foreground">No of appointments</p>
+                <p className="mt-2 text-4xl font-bold text-foreground">{appointmentCount}</p>
+                <p className="mt-3 text-sm text-muted-foreground">Click to review appointment history</p>
               </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-2xl">
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">Approval History</h3>
+              <div className="rounded-2xl bg-primary/10 p-3">
+                <CalendarClock className="h-6 w-6 text-primary" />
+              </div>
             </div>
+          </button>
 
-            {approvals.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No approval requests by this doctor.</p>
-            ) : (
-              <div className="space-y-3">
-                {approvals.map((r) => (
-                  <div key={r._id} className="rounded-xl border p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium">{approvalTypeLabel[r.requestType]}</p>
-                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(r.status)}`}>
-                        {r.status}
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Requested: {r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'}
-                    </p>
-                    {r.decisionAt && (
-                      <p className="text-sm text-muted-foreground">
-                        Decided: {new Date(r.decisionAt).toLocaleString()}
+          <button
+            type="button"
+            onClick={() =>
+              setActiveSection((current) => (current === 'approvals' ? null : 'approvals'))
+            }
+            className={`rounded-3xl border p-6 text-left transition-colors ${
+              activeSection === 'approvals'
+                ? 'border-primary/30 bg-primary/10'
+                : 'border-border bg-card hover:bg-accent/30'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-lg font-semibold text-foreground">No of approvals</p>
+                <p className="mt-2 text-4xl font-bold text-foreground">{approvalCount}</p>
+                <p className="mt-3 text-sm text-muted-foreground">Click to review approval history</p>
+              </div>
+              <div className="rounded-2xl bg-primary/10 p-3">
+                <ShieldCheck className="h-6 w-6 text-primary" />
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {activeSection && (
+          <Card className="rounded-2xl">
+            <CardContent className="space-y-5 p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  {activeSection === 'appointments' ? (
+                    <CalendarClock className="h-5 w-5 text-primary" />
+                  ) : (
+                    <ShieldCheck className="h-5 w-5 text-primary" />
+                  )}
+                  <h3 className="text-lg font-semibold">
+                    {activeSection === 'appointments' ? 'Appointment History' : 'Approval History'}
+                  </h3>
+                </div>
+
+                {activeSection === 'appointments' ? (
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <Select
+                      value={appointmentStatusFilter}
+                      onValueChange={(value) => setAppointmentStatusFilter(value as typeof appointmentStatusFilter)}
+                    >
+                      <SelectTrigger className="w-full rounded-xl sm:w-44">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={appointmentSort}
+                      onValueChange={(value) => setAppointmentSort(value as typeof appointmentSort)}
+                    >
+                      <SelectTrigger className="w-full rounded-xl sm:w-40">
+                        <SelectValue placeholder="Sort" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <Select
+                      value={approvalStatusFilter}
+                      onValueChange={(value) => setApprovalStatusFilter(value as typeof approvalStatusFilter)}
+                    >
+                      <SelectTrigger className="w-full rounded-xl sm:w-44">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={approvalTypeFilter}
+                      onValueChange={(value) => setApprovalTypeFilter(value as typeof approvalTypeFilter)}
+                    >
+                      <SelectTrigger className="w-full rounded-xl sm:w-44">
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="patient_create">Patient Create</SelectItem>
+                        <SelectItem value="guide_create">Guide Create</SelectItem>
+                        <SelectItem value="guide_update">Guide Edit</SelectItem>
+                        <SelectItem value="guide_delete">Guide Delete</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={approvalSort}
+                      onValueChange={(value) => setApprovalSort(value as typeof approvalSort)}
+                    >
+                      <SelectTrigger className="w-full rounded-xl sm:w-40">
+                        <SelectValue placeholder="Sort" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
+              {activeSection === 'appointments' ? (
+                filteredAppointments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No appointment history matches the selected filters.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredAppointments.map((item) => (
+                      <div key={item._id || item.id} className="rounded-xl border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-medium">{item.patientName || 'Unknown patient'}</p>
+                          <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(item.status)}`}>
+                            {String(item.status || 'pending')}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {item.date || '-'} {item.time ? `at ${item.time}` : ''}
+                        </p>
+                        {!!item.notes && <p className="mt-2 text-sm">Notes: {item.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : filteredApprovals.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No approval history matches the selected filters.</p>
+              ) : (
+                <div className="space-y-3">
+                  {filteredApprovals.map((item) => (
+                    <div key={item._id} className="rounded-xl border p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium">{approvalTypeLabel[item.requestType]}</p>
+                        <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(item.status)}`}>
+                          {item.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Requested: {item.createdAt ? new Date(item.createdAt).toLocaleString() : '-'}
                       </p>
-                    )}
-                    {r.requestNote && <p className="text-sm mt-2">Doctor note: {r.requestNote}</p>}
-                    {r.adminNote && <p className="text-sm">Admin note: {r.adminNote}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                      {item.decisionAt && (
+                        <p className="text-sm text-muted-foreground">
+                          Decided: {new Date(item.decisionAt).toLocaleString()}
+                        </p>
+                      )}
+                      {item.requestNote && <p className="mt-2 text-sm">Doctor note: {item.requestNote}</p>}
+                      {item.adminNote && <p className="text-sm">Admin note: {item.adminNote}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Users } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { ConversationItem, fetchConversations } from "@/lib/doctorChat";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const formatRelative = (iso: string) => {
   const then = new Date(iso).getTime();
@@ -54,9 +55,11 @@ export default function DoctorChat() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Patient Chats</h1>
-          <p className="text-muted-foreground">Communicate with your patients</p>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="p-5 sm:p-6">
+            <h1 className="text-2xl font-bold">Patient Chats</h1>
+            <p className="text-muted-foreground">Communicate with your patients</p>
+          </div>
         </div>
 
         {loading && sortedChats.length === 0 && (
@@ -76,9 +79,12 @@ export default function DoctorChat() {
             >
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                    <Users className="h-5 w-5 text-primary" />
-                  </div>
+                  <Avatar className="h-10 w-10 rounded-full bg-primary/10">
+                    <AvatarImage src={patient.profilePhoto} alt={patient.peerName} className="object-cover" />
+                    <AvatarFallback className="bg-primary/10">
+                      <Users className="h-5 w-5 text-primary" />
+                    </AvatarFallback>
+                  </Avatar>
                   <div>
                     <p className="font-medium leading-none">{patient.peerName}</p>
                     <p className="text-sm text-muted-foreground line-clamp-1 mt-1">

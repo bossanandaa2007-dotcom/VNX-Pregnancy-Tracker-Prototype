@@ -26,6 +26,7 @@ import {
   Apple,
   Dumbbell,
   Heart,
+  History,
   CheckCircle,
   XCircle,
   Pill,
@@ -40,6 +41,7 @@ import {
   Plus,
   MoreVertical,
 } from 'lucide-react';
+import type { GuideItem } from '@/types';
 
 const categoryConfig = {
   diet: { label: 'Diet', icon: Apple, color: 'text-success' },
@@ -93,20 +95,103 @@ const fallbackTips = [
   },
 ];
 
+type WeeklyTip = {
+  label: string;
+  title: string;
+  desc: string;
+  source?: string;
+  referenceLink?: string;
+};
+
+type GuideFormState = {
+  title: string;
+  content: string;
+  category: GuideItem['category'];
+  icon: string;
+  weekStart: number;
+  weekEnd: number;
+  trimester: NonNullable<GuideItem['trimester']>;
+  source: NonNullable<GuideItem['source']>;
+  referenceLink: string;
+  note: string;
+};
+
+type ApprovalHistory = {
+  _id: string;
+  requestType: 'patient_create' | 'guide_create' | 'guide_update' | 'guide_delete' | string;
+  status: 'pending' | 'approved' | 'rejected' | string;
+  requestNote?: string;
+  adminNote?: string;
+  decisionAt?: string;
+  createdAt?: string;
+  payload?: any;
+};
+
+const approvalTypeLabel: Record<string, string> = {
+  patient_create: 'Patient Create',
+  guide_create: 'Guide Create',
+  guide_update: 'Guide Edit',
+  guide_delete: 'Guide Delete',
+};
+
+const normalizeGuideItems = (payload: unknown): GuideItem[] => {
+  if (!Array.isArray(payload)) return [];
+
+  return payload
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item, index) => ({
+      _id: typeof item._id === 'string' ? item._id : undefined,
+      id: typeof item.id === 'string' ? item.id : undefined,
+      title: typeof item.title === 'string' ? item.title : `Guide ${index + 1}`,
+      category:
+        item.category === 'diet' ||
+        item.category === 'exercise' ||
+        item.category === 'wellness' ||
+        item.category === 'dos' ||
+        item.category === 'donts'
+          ? item.category
+          : 'wellness',
+      content: typeof item.content === 'string' ? item.content : '',
+      icon: typeof item.icon === 'string' ? item.icon : undefined,
+      source: item.source === 'WHO' || item.source === 'MOHFW' ? item.source : undefined,
+      referenceLink: typeof item.referenceLink === 'string' ? item.referenceLink : undefined,
+      weekStart: typeof item.weekStart === 'number' ? item.weekStart : undefined,
+      weekEnd: typeof item.weekEnd === 'number' ? item.weekEnd : undefined,
+      trimester:
+        item.trimester === 'first' ||
+        item.trimester === 'second' ||
+        item.trimester === 'third' ||
+        item.trimester === 'all'
+          ? item.trimester
+          : undefined,
+    }));
+};
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback;
+
 export default function Guide() {
 
   const { user } = useAuth();
   const isDoctor = user?.role === 'doctor';
   const [activeTab, setActiveTab] = useState('all');
-  const [guides, setGuides] = useState<any[]>([]);
+  const [guides, setGuides] = useState<GuideItem[]>([]);
+  const [guidesLoading, setGuidesLoading] = useState(false);
+  const [guidesError, setGuidesError] = useState('');
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
-  const [weeklyTips, setWeeklyTips] = useState<any[]>([]);
+  const [weeklyTips, setWeeklyTips] = useState<WeeklyTip[]>([]);
   const [doctorWeek, setDoctorWeek] = useState(22);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<any>({
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<'all' | 'guide_create' | 'guide_update' | 'guide_delete'>('all');
+  const [historySort, setHistorySort] = useState<'newest' | 'oldest'>('newest');
+  const [form, setForm] = useState<GuideFormState>({
     title: '',
     content: '',
     category: 'diet',
@@ -169,12 +254,26 @@ export default function Guide() {
 
     if (!effectiveWeek) return;
 
-    fetchGuideApi(`/week/${effectiveWeek}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setGuides(data);
-      })
-      .catch((err) => console.error(err));
+    const loadGuides = async () => {
+      setGuidesLoading(true);
+      setGuidesError('');
+      try {
+        const res = await fetchGuideApi(`/week/${effectiveWeek}`);
+        if (!res.ok) {
+          throw new Error(await readApiError(res));
+        }
+        const data = await res.json();
+        setGuides(normalizeGuideItems(data));
+      } catch (err: unknown) {
+        console.error(err);
+        setGuides([]);
+        setGuidesError(getErrorMessage(err, 'Failed to load guides from backend'));
+      } finally {
+        setGuidesLoading(false);
+      }
+    };
+
+    loadGuides();
 
   }, [effectiveWeek]);
 
@@ -199,8 +298,54 @@ export default function Guide() {
 
   const refreshGuides = async (week: number) => {
     const res = await fetchGuideApi(`/week/${week}`);
+    if (!res.ok) {
+      throw new Error(await readApiError(res));
+    }
     const data = await res.json();
-    setGuides(Array.isArray(data) ? data : []);
+    setGuides(normalizeGuideItems(data));
+    setGuidesError('');
+  };
+
+  const fetchDoctorApprovalHistory = async (doctorId: string) => {
+    const compat = await fetch(`${API_BASE}/api/auth/doctor/${doctorId}/approval-history`);
+    const compatData = await compat.json().catch(() => null);
+    if (compat.ok && compatData?.success) {
+      return compatData.requests || [];
+    }
+
+    const primary = await fetch(`${API_BASE}/api/approvals/doctor/${doctorId}`);
+    const primaryData = await primary.json().catch(() => null);
+    if (primary.ok && primaryData?.success) {
+      return primaryData.requests || [];
+    }
+
+    const fallback = await fetch(`${API_BASE}/api/auth/approvals/doctor/${doctorId}`);
+    const fallbackData = await fallback.json().catch(() => null);
+    if (fallback.ok && fallbackData?.success) {
+      return fallbackData.requests || [];
+    }
+
+    throw new Error(
+      parseErrorMessage(
+        fallbackData || primaryData || compatData,
+        `Failed to fetch approval history (${fallback.status || primary.status || compat.status})`
+      )
+    );
+  };
+
+  const openApprovalHistory = async () => {
+    if (!user?.id) return;
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const requests = await fetchDoctorApprovalHistory(user.id);
+      setApprovalHistory(Array.isArray(requests) ? requests : []);
+    } catch (err: unknown) {
+      console.error(err);
+      alert(getErrorMessage(err, 'Failed to load approval history'));
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const openCreate = () => {
@@ -221,7 +366,7 @@ export default function Guide() {
     setEditOpen(true);
   };
 
-  const openEdit = (item: any) => {
+  const openEdit = (item: GuideItem) => {
     const id = typeof item?._id === 'string' ? item._id : null;
     setEditId(id && !id.startsWith('seed-') ? id : null);
     setForm({
@@ -247,8 +392,12 @@ export default function Guide() {
       if (!user?.id) {
         throw new Error('Doctor session missing. Please login again.');
       }
-      if (editId && !String(form.note || '').trim()) {
-        throw new Error('Please add a note for admin review before requesting an edit');
+      if (!String(form.note || '').trim()) {
+        throw new Error(
+          editId
+            ? 'Please add a note for admin review before requesting an edit'
+            : 'Please add a note for admin review before requesting a new guide'
+        );
       }
 
       const payload = {
@@ -263,13 +412,11 @@ export default function Guide() {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          editId
-            ? {
-                ...payload,
-                doctorId: user?.id,
-                note: String(form.note || '').trim(),
-              }
-            : payload
+          {
+            ...payload,
+            doctorId: user?.id,
+            note: String(form.note || '').trim(),
+          }
         ),
       });
 
@@ -277,12 +424,12 @@ export default function Guide() {
         throw new Error(await readApiError(res));
       }
 
-      alert(editId ? 'Edit request sent to admin for approval.' : 'Guide saved successfully.');
+      alert(editId ? 'Edit request sent to admin for approval.' : 'New guide request sent to admin for approval.');
       setEditOpen(false);
       await refreshGuides(week);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(err?.message || 'Failed to save guide');
+      alert(getErrorMessage(err, 'Failed to save guide'));
     } finally {
       setEditBusy(false);
     }
@@ -319,9 +466,9 @@ export default function Guide() {
       if (!res.ok) throw new Error(await readApiError(res));
       alert('Delete request sent to admin for approval.');
       await refreshGuides(week);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(err?.message || 'Failed to send delete request');
+      alert(getErrorMessage(err, 'Failed to send delete request'));
     }
   };
 
@@ -329,6 +476,15 @@ export default function Guide() {
     activeTab === 'all'
       ? guides
       : guides.filter((item) => item.category === activeTab);
+
+  const filteredApprovalHistory = approvalHistory
+    .filter((item) => historyFilter === 'all' || item.status === historyFilter)
+    .filter((item) => historyTypeFilter === 'all' || item.requestType === historyTypeFilter)
+    .sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return historySort === 'newest' ? bTime - aTime : aTime - bTime;
+    });
 
   const readApiError = async (res: Response) => {
     try {
@@ -359,16 +515,18 @@ export default function Guide() {
       <div className="space-y-6">
 
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Pregnancy Guide</h1>
-          <p className="text-muted-foreground">
-            Essential tips and guidelines for a healthy pregnancy
-          </p>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="p-5 sm:p-6">
+            <h1 className="text-2xl font-bold text-foreground">Pregnancy Guide</h1>
+            <p className="text-muted-foreground">
+              Essential tips and guidelines for a healthy pregnancy
+            </p>
+          </div>
         </div>
 
         {isDoctor && (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-muted-foreground">Week</span>
               <Input
                 type="number"
@@ -382,10 +540,16 @@ export default function Guide() {
                 className="w-24"
               />
             </div>
-            <Button onClick={openCreate} className="gap-2">
-              <Plus className="h-4 w-4" />
-              New Guide
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={openApprovalHistory} className="gap-2">
+                <History className="h-4 w-4" />
+                Approval History
+              </Button>
+              <Button onClick={openCreate} className="gap-2">
+                <Plus className="h-4 w-4" />
+                New Guide
+              </Button>
+            </div>
           </div>
         )}
 
@@ -466,6 +630,24 @@ export default function Guide() {
           </TabsList>
 
           <TabsContent value={activeTab} className="mt-6">
+            {guidesError && (
+              <div className="mb-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                {guidesError}
+              </div>
+            )}
+
+            {guidesLoading && (
+              <div className="mb-4 rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
+                Loading guides from backend...
+              </div>
+            )}
+
+            {!guidesLoading && !guidesError && filteredItems.length === 0 && (
+              <div className="mb-4 rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
+                No guides were returned from the backend for week {effectiveWeek}.
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 
                {filteredItems.map((item, index) => {
@@ -714,17 +896,19 @@ export default function Guide() {
                 />
               </div>
 
-              {editId && (
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium">Note for admin (required)</label>
-                  <Textarea
-                    value={form.note}
-                    onChange={(e) => setForm({ ...form, note: e.target.value })}
-                    rows={3}
-                    placeholder="Explain what changed and why"
-                  />
-                </div>
-              )}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Note for admin (required)</label>
+                <Textarea
+                  value={form.note}
+                  onChange={(e) => setForm({ ...form, note: e.target.value })}
+                  rows={3}
+                  placeholder={
+                    editId
+                      ? 'Explain what changed and why'
+                      : 'Explain why this new guide should be added'
+                  }
+                />
+              </div>
             </div>
 
             <DialogFooter>
@@ -732,9 +916,105 @@ export default function Guide() {
                 Cancel
               </Button>
               <Button onClick={saveGuide} disabled={editBusy || !form.title || !form.content}>
-                {editBusy ? 'Saving...' : editId ? 'Send Edit Request' : 'Save'}
+                {editBusy ? 'Saving...' : editId ? 'Send Edit Request' : 'Send Create Request'}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Approval History</DialogTitle>
+              <DialogDescription>
+                Review requests submitted by this doctor with filters by status and type.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Status</label>
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                  value={historyFilter}
+                  onChange={(e) => setHistoryFilter(e.target.value as typeof historyFilter)}
+                >
+                  <option value="all">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Type</label>
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                  value={historyTypeFilter}
+                  onChange={(e) => setHistoryTypeFilter(e.target.value as typeof historyTypeFilter)}
+                >
+                  <option value="all">All types</option>
+                  <option value="guide_create">Guide Create</option>
+                  <option value="guide_update">Guide Edit</option>
+                  <option value="guide_delete">Guide Delete</option>
+                </select>
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Sort</label>
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                  value={historySort}
+                  onChange={(e) => setHistorySort(e.target.value as typeof historySort)}
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {historyLoading ? (
+                <div className="rounded-xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                  Loading approval history...
+                </div>
+              ) : filteredApprovalHistory.length === 0 ? (
+                <div className="rounded-xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                  No approval requests match the selected filters.
+                </div>
+              ) : (
+                filteredApprovalHistory.map((item) => (
+                  <div key={item._id} className="rounded-xl border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">
+                        {approvalTypeLabel[item.requestType] || item.requestType.replace(/_/g, ' ')}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${
+                          item.status === 'approved'
+                            ? 'bg-green-100 text-green-700'
+                            : item.status === 'rejected'
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Requested: {item.createdAt ? new Date(item.createdAt).toLocaleString() : '-'}
+                    </p>
+                    {item.decisionAt && (
+                      <p className="text-sm text-muted-foreground">
+                        Decided: {new Date(item.decisionAt).toLocaleString()}
+                      </p>
+                    )}
+                    {item.requestNote && <p className="mt-2 text-sm">Doctor note: {item.requestNote}</p>}
+                    {item.adminNote && <p className="text-sm">Admin note: {item.adminNote}</p>}
+                  </div>
+                ))
+              )}
+            </div>
           </DialogContent>
         </Dialog>
       </div>

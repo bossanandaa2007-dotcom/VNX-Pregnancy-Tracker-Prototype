@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { User, Calendar, AlertTriangle, CheckCircle, AlertCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 interface PatientCardProps {
   patient: Patient;
@@ -36,9 +37,8 @@ export function PatientCard({ patient, onClick, onChatClick }: PatientCardProps)
     <div
       className={cn(
         'group relative overflow-hidden rounded-2xl border bg-card p-5 transition-all duration-300',
-        'hover:shadow-lg hover:border-primary/30 cursor-pointer animate-fade-in'
+        'hover:shadow-lg hover:border-primary/30 animate-fade-in'
       )}
-      onClick={onClick}
     >
       {/* Risk Indicator */}
       <div className="absolute right-0 top-0 h-1 w-full bg-gradient-to-r from-transparent via-transparent to-transparent">
@@ -54,9 +54,12 @@ export function PatientCard({ patient, onClick, onChatClick }: PatientCardProps)
 
       <div className="flex items-start gap-4">
         {/* Avatar */}
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10">
-          <User className="h-6 w-6 text-primary" />
-        </div>
+        <Avatar className="h-12 w-12 shrink-0 rounded-full bg-primary/10">
+          <AvatarImage src={patient.profilePhoto} alt={patient.name} className="object-cover" />
+          <AvatarFallback className="bg-primary/10">
+            <User className="h-6 w-6 text-primary" />
+          </AvatarFallback>
+        </Avatar>
 
         {/* Info */}
         <div className="flex-1 space-y-2">

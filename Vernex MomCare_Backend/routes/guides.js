@@ -205,13 +205,54 @@ router.delete("/:id", async (req, res) => {
 // CREATE new guide (Admin / Doctor)
 router.post("/", async (req, res) => {
   try {
-    if (req.body?.referenceLink && !isAllowedReference(req.body?.source, req.body?.referenceLink)) {
+    const { doctorId, note, ...payload } = req.body || {};
+
+    if (payload?.referenceLink && !isAllowedReference(payload?.source, payload?.referenceLink)) {
       return res.status(400).json({
         message: "Invalid referenceLink. Only WHO / MOHFW official domains are allowed.",
       });
     }
 
-    const newGuide = new Guide(req.body);
+    if (doctorId) {
+      if (!mongoose.Types.ObjectId.isValid(String(doctorId))) {
+        return res.status(400).json({ message: "Invalid doctor session. Please login again." });
+      }
+
+      const doctor = await User.findById(doctorId);
+      if (!doctor || doctor.role !== "doctor") {
+        return res.status(403).json({ message: "Only doctors can submit guide create requests" });
+      }
+
+      if (!String(note || "").trim()) {
+        return res.status(400).json({ message: "A note is required to request guide creation" });
+      }
+
+      const pending = await ApprovalRequest.findOne({
+        requestType: "guide_create",
+        status: "pending",
+        requestedBy: doctor._id,
+        "payload.title": payload.title,
+        "payload.weekStart": Number(payload.weekStart),
+        "payload.weekEnd": Number(payload.weekEnd),
+      });
+      if (pending) {
+        return res.status(400).json({ message: "A similar guide creation request is already pending" });
+      }
+
+      await ApprovalRequest.create({
+        requestType: "guide_create",
+        requestedBy: doctor._id,
+        requestNote: String(note).trim(),
+        payload,
+      });
+
+      return res.status(202).json({
+        success: true,
+        message: "Guide create request sent to admin for approval",
+      });
+    }
+
+    const newGuide = new Guide(payload);
     const savedGuide = await newGuide.save();
 
     return res.json(savedGuide);

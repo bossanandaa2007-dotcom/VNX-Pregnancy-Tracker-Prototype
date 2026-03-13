@@ -39,6 +39,12 @@ const applyApproval = async (requestDoc) => {
     return;
   }
 
+  if (requestType === "guide_create") {
+    const saved = await Guide.create(payload || {});
+    if (!saved) throw new Error("Unable to create guide");
+    return;
+  }
+
   if (requestType === "guide_update") {
     const { guideId, updateData } = payload || {};
     const saved = await Guide.findByIdAndUpdate(guideId, updateData, {

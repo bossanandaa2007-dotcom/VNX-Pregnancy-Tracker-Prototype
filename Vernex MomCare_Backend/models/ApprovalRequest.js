@@ -4,7 +4,7 @@ const approvalRequestSchema = new mongoose.Schema(
   {
     requestType: {
       type: String,
-      enum: ["patient_create", "guide_update", "guide_delete"],
+      enum: ["patient_create", "guide_create", "guide_update", "guide_delete"],
       required: true,
     },
     status: {

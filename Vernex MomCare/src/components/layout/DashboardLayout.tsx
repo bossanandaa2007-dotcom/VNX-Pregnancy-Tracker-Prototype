@@ -48,7 +48,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       )}
 
       {/* ================= MAIN CONTENT ================= */}
-      <main className={`${isPatient ? 'lg:pl-64' : 'lg:pl-64'} pb-16`}>
+      <main className={`${isPatient ? 'pb-32 lg:pl-64' : 'pb-16 lg:pl-64'}`}>
         <div className="min-h-screen p-4 lg:p-8">
           {children}
         </div>
@@ -57,7 +57,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* ================= MOBILE ONLY ================= */}
       {isPatient && (
         <>
-          <MobileBottomNav />
+          {!drawerOpen && <MobileBottomNav />}
 
           <MobileSideDrawer
             open={drawerOpen}

@@ -3,18 +3,46 @@ import {
   Baby,
   Bell,
   Calendar,
-  Droplets,
-  Footprints,
   Heart,
-  Pill,
+  Check,
+  Pencil,
+  Plus,
+  RotateCcw,
   Search,
   Sparkles,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { StatCard } from '@/components/ui/stat-card';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Calendar as DateCalendar } from '@/components/ui/calendar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from "@/config/api";
+import {
+  createReminder,
+  deleteReminder,
+  fetchPatientReminders,
+  updateReminder,
+  updateReminderStatus,
+} from '@/lib/reminders';
+import type { HealthReminder } from '@/types/reminder';
 import {
   fetchResources,
   refreshNotifications,
@@ -35,6 +63,11 @@ type PatientProfile = {
   riskStatus?: 'normal' | 'attention' | 'high-risk';
   doctorId?: string;
 };
+
+type ReminderConfirmAction =
+  | { type: 'update' }
+  | { type: 'delete'; reminder: HealthReminder }
+  | null;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -81,12 +114,98 @@ const calculatePregnancyProgress = (startDate: string | undefined, now: Date) =>
 };
 
 const pad2 = (n: number) => n.toString().padStart(2, '0');
+const formatDesktopTimeInputValue = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 4);
+  const letters = value.replace(/[^a-zA-Z]/g, '').slice(0, 2).toUpperCase();
+  if (!digits) return letters;
+  if (digits.length <= 2) return digits;
+  const base = `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  if (!letters) return digits.length === 4 ? `${base}  ` : base;
+  return `${base}  ${letters}`;
+};
+const formatReminderTime = (time: string) => {
+  const [hoursText, minutesText] = time.split(':');
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return time;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+};
+const parseReminderTimeInput = (value: string, meridiem: 'AM' | 'PM') => {
+  const normalized = value.trim();
+  const match = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hoursRaw = Number(match[1]);
+  const minutesRaw = Number(match[2]);
+  if (Number.isNaN(hoursRaw) || Number.isNaN(minutesRaw) || hoursRaw < 1 || hoursRaw > 12 || minutesRaw < 0 || minutesRaw > 59) {
+    return null;
+  }
+  const hours24 = (hoursRaw % 12) + (meridiem === 'PM' ? 12 : 0);
+  return `${pad2(hours24)}:${pad2(minutesRaw)}`;
+};
+const parseDesktopReminderTimeInput = (value: string) => {
+  const normalized = value.trim().toUpperCase().replace(/\./g, '').replace(/\s+/g, ' ');
+  const match = normalized.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (!match) return null;
+  return parseReminderTimeInput(`${match[1]}:${match[2]}`, match[3] as 'AM' | 'PM');
+};
+const parseStoredDate = (value: string) => {
+  if (!value) return undefined;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+const formatDateForInput = (date: Date | undefined) => {
+  if (!date) return '';
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+};
+const formatReminderDateLabel = (value: string, fallback: string) => {
+  const date = parseStoredDate(value);
+  return date
+    ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : fallback;
+};
+const COMMON_REMINDER_TITLES = [
+  'Take iron tablet',
+  'Take prenatal vitamins',
+  'Drink water',
+  'Morning walk',
+  'Check blood pressure',
+  'Take calcium tablet',
+];
+const MOBILE_PICKER_HOURS = Array.from({ length: 12 }, (_, index) =>
+  String(index + 1).padStart(2, '0')
+);
+const MOBILE_PICKER_MINUTES = Array.from({ length: 60 }, (_, index) =>
+  String(index).padStart(2, '0')
+);
+const MOBILE_PICKER_MERIDIEMS = ['AM', 'PM'] as const;
 
 export function PatientDashboard() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [patient, setPatient] = useState<PatientProfile | null>(null);
   const [patientLoading, setPatientLoading] = useState(false);
   const [patientError, setPatientError] = useState('');
+  const [reminders, setReminders] = useState<HealthReminder[]>([]);
+  const [remindersLoading, setRemindersLoading] = useState(false);
+  const [reminderDialogOpen, setReminderDialogOpen] = useState(false);
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [showReminderActions, setShowReminderActions] = useState(false);
+  const [confirmReminderAction, setConfirmReminderAction] = useState<ReminderConfirmAction>(null);
+  const [mobileTimePickerOpen, setMobileTimePickerOpen] = useState(false);
+  const [reminderForm, setReminderForm] = useState({
+    title: '',
+    notifyTimeInput: '',
+    notifyHourInput: '',
+    notifyMinuteInput: '',
+    notifyMeridiemInput: 'AM' as 'AM' | 'PM',
+    notifyTimes: [] as string[],
+    startDate: '',
+    endDate: '',
+    details: '',
+  });
 
   const [city, setCity] = useState(() => localStorage.getItem('vnx_city') || 'Chennai');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -108,6 +227,12 @@ export function PatientDashboard() {
     'Continue hydration, rest, and regular checkups',
   ]);
   const notificationsRef = useRef<HTMLDivElement>(null);
+  const mobileHourRef = useRef<HTMLDivElement>(null);
+  const mobileMinuteRef = useRef<HTMLDivElement>(null);
+  const mobileMeridiemRef = useRef<HTMLDivElement>(null);
+  const mobileHourScrollTimeoutRef = useRef<number | null>(null);
+  const mobileMinuteScrollTimeoutRef = useRef<number | null>(null);
+  const mobileMeridiemScrollTimeoutRef = useRef<number | null>(null);
 
   const refreshIntervalMs = 10 * 60 * 1000;
   const cities = [
@@ -125,14 +250,8 @@ export function PatientDashboard() {
     'Coimbatore',
   ];
 
-  const reminders = [
-    { icon: Pill, text: 'Take prenatal vitamins', time: 'Daily' },
-    { icon: Calendar, text: 'Next ultrasound appointment', time: 'As scheduled' },
-    { icon: Footprints, text: '30 min walk completed', time: 'Today' },
-    { icon: Droplets, text: 'Stay hydrated - 8 glasses', time: 'Daily goal' },
-  ];
-
   const profile = (patient ?? (user as unknown as PatientProfile) ?? {}) as PatientProfile;
+  const patientId = String(profile._id || profile.id || user?.id || '');
   const pregnancy = useMemo(
     () => calculatePregnancyProgress(profile.pregnancyStartDate, now),
     [profile.pregnancyStartDate, now]
@@ -237,6 +356,69 @@ export function PatientDashboard() {
   }, [user?.id, user?.role, user?.email]);
 
   useEffect(() => {
+    const loadReminders = async () => {
+      if (!patientId || user?.role !== 'patient') return;
+      setRemindersLoading(true);
+      try {
+        const rows = await fetchPatientReminders(patientId);
+        setReminders(rows);
+      } catch (error) {
+        console.error('Reminder fetch error:', error);
+      } finally {
+        setRemindersLoading(false);
+      }
+    };
+
+    loadReminders();
+  }, [patientId, user?.role]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!patientId || user?.role !== 'patient' || reminders.length === 0) return;
+
+    const tick = () => {
+      const nowValue = new Date();
+      const currentTime = `${pad2(nowValue.getHours())}:${pad2(nowValue.getMinutes())}`;
+      const today = nowValue.toISOString().slice(0, 10);
+
+      reminders.forEach((reminder) => {
+        if (reminder.isDone) return;
+        const today = nowValue.toISOString().slice(0, 10);
+        if (reminder.startDate && String(reminder.startDate).slice(0, 10) > today) return;
+        if (reminder.endDate && String(reminder.endDate).slice(0, 10) < today) return;
+        const reminderId = String(reminder._id || reminder.id || '');
+        const times = Array.isArray(reminder.notifyTimes) ? reminder.notifyTimes : [];
+        if (!times.includes(currentTime)) return;
+
+        const storageKey = `vnx-reminder-${reminderId}-${today}-${currentTime}`;
+        if (localStorage.getItem(storageKey)) return;
+        localStorage.setItem(storageKey, '1');
+
+        toast({
+          title: reminder.title,
+          description: reminder.details || `Reminder scheduled for ${currentTime}`,
+        });
+
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('Health Reminder', {
+            body: `${reminder.title} at ${currentTime}`,
+          });
+        }
+      });
+    };
+
+    tick();
+    const intervalId = setInterval(tick, 30_000);
+    return () => clearInterval(intervalId);
+  }, [patientId, reminders, toast, user?.role]);
+
+  useEffect(() => {
     const loadBabyDevelopment = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/pregnancy/development/${pregnancy.week}`);
@@ -263,18 +445,292 @@ export function PatientDashboard() {
 
   const latest = notifications[0];
 
+  const openCreateReminder = () => {
+    setEditingReminderId(null);
+    setReminderForm({
+      title: '',
+      notifyTimeInput: '',
+      notifyHourInput: '',
+      notifyMinuteInput: '',
+      notifyMeridiemInput: 'AM',
+      notifyTimes: [],
+      startDate: '',
+      endDate: '',
+      details: '',
+    });
+    setReminderDialogOpen(true);
+  };
+
+  const openEditReminder = (reminder: HealthReminder) => {
+    setEditingReminderId(String(reminder._id || reminder.id || ''));
+    setReminderForm({
+      title: reminder.title || '',
+      notifyTimeInput: '',
+      notifyHourInput: '',
+      notifyMinuteInput: '',
+      notifyMeridiemInput: 'AM',
+      notifyTimes: Array.isArray(reminder.notifyTimes) ? reminder.notifyTimes : [],
+      startDate: reminder.startDate ? String(reminder.startDate).slice(0, 10) : '',
+      endDate: reminder.endDate ? String(reminder.endDate).slice(0, 10) : '',
+      details: reminder.details || '',
+    });
+    setReminderDialogOpen(true);
+  };
+
+  const persistReminder = async () => {
+    if (!patientId || !user?.id || !reminderForm.title.trim() || reminderForm.notifyTimes.length === 0) return;
+    setReminderSaving(true);
+    try {
+      const intervalLabel = reminderForm.notifyTimes
+        .slice()
+        .sort()
+        .map((time) => {
+          const [hoursText, minutesText] = time.split(':');
+          const hours = Number(hoursText);
+          const minutes = Number(minutesText);
+          const date = new Date();
+          date.setHours(hours, minutes, 0, 0);
+          return date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+        })
+        .join(', ');
+
+      const payload = {
+        actorRole: 'patient' as const,
+        actorId: user.id,
+        title: reminderForm.title.trim(),
+        intervalLabel,
+        notifyTimes: reminderForm.notifyTimes,
+        startDate: reminderForm.startDate || null,
+        endDate: reminderForm.endDate || null,
+        details: reminderForm.details.trim(),
+      };
+
+      const reminder = editingReminderId
+        ? await updateReminder(editingReminderId, payload)
+        : await createReminder(patientId, payload);
+
+      setReminders((prev) => {
+        const next = editingReminderId
+          ? prev.map((item) =>
+              String(item._id || item.id) === String(reminder._id || reminder.id) ? reminder : item
+            )
+          : [reminder, ...prev];
+        return next;
+      });
+
+      toast({
+        title: editingReminderId ? 'Reminder updated' : 'Reminder added',
+        description: editingReminderId
+          ? 'Your health reminder was updated successfully.'
+          : 'Your health reminder was added successfully.',
+      });
+      setReminderDialogOpen(false);
+      setEditingReminderId(null);
+      setReminderForm({
+        title: '',
+        notifyTimeInput: '',
+        notifyHourInput: '',
+        notifyMinuteInput: '',
+        notifyMeridiemInput: 'AM',
+        notifyTimes: [],
+        startDate: '',
+        endDate: '',
+        details: '',
+      });
+    } catch (error: any) {
+      console.error('Save reminder error:', error);
+      toast({
+        title: 'Reminder save failed',
+        description: error?.message || 'Unable to save reminder',
+        variant: 'destructive',
+      });
+    } finally {
+      setReminderSaving(false);
+    }
+  };
+
+  const handleSaveReminder = async () => {
+    if (editingReminderId) {
+      setConfirmReminderAction({ type: 'update' });
+      return;
+    }
+    await persistReminder();
+  };
+
+  const deleteReminderRecord = async (reminder: HealthReminder) => {
+    const reminderId = String(reminder._id || reminder.id || '');
+    if (!reminderId || !user?.id) return;
+    try {
+      await deleteReminder(reminderId, { actorRole: 'patient', actorId: user.id });
+      setReminders((prev) => prev.filter((item) => String(item._id || item.id) !== reminderId));
+      toast({
+        title: 'Reminder deleted',
+        description: 'Your reminder was removed successfully.',
+      });
+    } catch (error: any) {
+      console.error('Delete reminder error:', error);
+      toast({
+        title: 'Delete failed',
+        description: error?.message || 'Unable to delete reminder',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDeleteReminder = (reminder: HealthReminder) => {
+    setConfirmReminderAction({ type: 'delete', reminder });
+  };
+
+  const handleToggleReminder = async (reminder: HealthReminder, isDone: boolean) => {
+    const reminderId = String(reminder._id || reminder.id || '');
+    if (!reminderId || !patientId) return;
+    try {
+      const updated = await updateReminderStatus(reminderId, { patientId, isDone });
+      setReminders((prev) =>
+        prev.map((item) => (String(item._id || item.id) === reminderId ? updated : item))
+      );
+    } catch (error: any) {
+      console.error('Toggle reminder status error:', error);
+      toast({
+        title: 'Update failed',
+        description: error?.message || 'Unable to update reminder status',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleAddNotifyTime = () => {
+    const mobileValue =
+      reminderForm.notifyHourInput && reminderForm.notifyMinuteInput
+        ? parseReminderTimeInput(
+            `${reminderForm.notifyHourInput}:${reminderForm.notifyMinuteInput}`,
+            reminderForm.notifyMeridiemInput
+          )
+        : null;
+    const value = mobileValue || parseDesktopReminderTimeInput(reminderForm.notifyTimeInput);
+    if (!value) {
+      if (
+        reminderForm.notifyTimeInput.trim() ||
+        reminderForm.notifyHourInput ||
+        reminderForm.notifyMinuteInput
+      ) {
+        toast({
+          title: 'Invalid time',
+          description: 'Desktop: type like 10:30  PM. Mobile: pick hour, minute, then AM or PM.',
+          variant: 'destructive',
+        });
+      }
+      return;
+    }
+    if (reminderForm.notifyTimes.includes(value)) {
+      setReminderForm((prev) => ({ ...prev, notifyTimeInput: '' }));
+      return;
+    }
+    setReminderForm((prev) => ({
+      ...prev,
+      notifyTimes: [...prev.notifyTimes, value].sort(),
+      notifyTimeInput: '',
+      notifyHourInput: '',
+      notifyMinuteInput: '',
+      notifyMeridiemInput: prev.notifyMeridiemInput,
+    }));
+  };
+
+  const handleRemoveNotifyTime = (value: string) => {
+    setReminderForm((prev) => ({
+      ...prev,
+      notifyTimes: prev.notifyTimes.filter((item) => item !== value),
+    }));
+  };
+
+  const syncMobilePickerColumn = (
+    ref: React.RefObject<HTMLDivElement>,
+    value: string,
+    values: readonly string[]
+  ) => {
+    const index = values.indexOf(value);
+    if (!ref.current || index < 0) return;
+    const optionHeight = 44;
+    ref.current.scrollTo({ top: index * optionHeight, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (!mobileTimePickerOpen) return;
+    syncMobilePickerColumn(mobileHourRef, reminderForm.notifyHourInput || '06', MOBILE_PICKER_HOURS);
+    syncMobilePickerColumn(
+      mobileMinuteRef,
+      reminderForm.notifyMinuteInput || '00',
+      MOBILE_PICKER_MINUTES
+    );
+    syncMobilePickerColumn(
+      mobileMeridiemRef,
+      reminderForm.notifyMeridiemInput || 'AM',
+      MOBILE_PICKER_MERIDIEMS
+    );
+  }, [
+    mobileTimePickerOpen,
+    reminderForm.notifyHourInput,
+    reminderForm.notifyMinuteInput,
+    reminderForm.notifyMeridiemInput,
+  ]);
+
+  const handleMobilePickerScroll = (
+    ref: React.RefObject<HTMLDivElement>,
+    timeoutRef: React.MutableRefObject<number | null>,
+    values: readonly string[],
+    onValueChange: (value: string) => void
+  ) => {
+    if (!ref.current) return;
+    const optionHeight = 44;
+    const index = Math.max(0, Math.min(values.length - 1, Math.round(ref.current.scrollTop / optionHeight)));
+    onValueChange(values[index]);
+    if (timeoutRef.current) {
+      window.clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = window.setTimeout(() => {
+      settleMobilePickerColumn(ref, values[index], values);
+      timeoutRef.current = null;
+    }, 90);
+  };
+
+  const settleMobilePickerColumn = (
+    ref: React.RefObject<HTMLDivElement>,
+    value: string,
+    values: readonly string[]
+  ) => {
+    if (!ref.current) return;
+    const optionHeight = 44;
+    const index = Math.max(0, Math.min(values.length - 1, values.indexOf(value)));
+    ref.current.scrollTo({ top: index * optionHeight, behavior: 'smooth' });
+  };
+
+  const applyMobilePickerTime = () => {
+    setReminderForm((prev) => ({
+      ...prev,
+      notifyHourInput: prev.notifyHourInput || '06',
+      notifyMinuteInput: prev.notifyMinuteInput || '00',
+      notifyMeridiemInput: prev.notifyMeridiemInput || 'AM',
+      notifyTimeInput: '',
+    }));
+    setMobileTimePickerOpen(false);
+  };
+
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold text-foreground">
+      <div className="flex flex-col gap-5 rounded-[28px] border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-background to-accent/30 p-6 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-7">
+        <div className="space-y-3">
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-background/80 px-3 py-1 text-xs font-medium text-primary">
+            <Sparkles className="h-3.5 w-3.5" />
+            Personal journey
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-[2.1rem]">
             Hello, {(profile?.name || user?.name || 'Mom').split(' ')[0]}!
           </h1>
-          <p className="text-muted-foreground">Here&apos;s your pregnancy journey at a glance</p>
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">Here&apos;s your pregnancy journey at a glance</p>
           {patientLoading && <p className="text-xs text-muted-foreground">Loading your profile...</p>}
           {patientError && <p className="text-xs text-muted-foreground">{patientError}</p>}
         </div>
-        <div className="rounded-xl border bg-background px-4 py-2 text-right">
+        <div className="hidden rounded-[24px] border bg-background/90 px-4 py-3 text-right shadow-sm sm:block">
           <p className="text-xs text-muted-foreground">
             {now.toLocaleDateString('en-IN', {
               weekday: 'short',
@@ -495,30 +951,130 @@ export function PatientDashboard() {
 
         <Card className="animate-fade-in" style={{ animationDelay: '200ms' }}>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Bell className="h-5 w-5 text-primary" />
-              Health Reminders
-            </CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Bell className="h-5 w-5 text-primary" />
+                Health Reminders
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2 rounded-xl"
+                  onClick={() => setShowReminderActions((prev) => !prev)}
+                >
+                  <Pencil className="h-4 w-4" />
+                  Edit
+                </Button>
+                <Button size="sm" className="gap-2 rounded-xl" onClick={openCreateReminder}>
+                  <Plus className="h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {reminders.map((reminder, index) => {
-                const Icon = reminder.icon;
-                return (
-                  <div
-                    key={index}
-                    className="flex items-center gap-3 rounded-xl border bg-background p-3 transition-colors hover:bg-accent/30"
-                  >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                      <Icon className="h-5 w-5 text-primary" />
+              {remindersLoading ? (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  Loading reminders...
+                </div>
+              ) : reminders.length === 0 ? (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  No health reminders yet. Add one for yourself or wait for your doctor to set one.
+                </div>
+              ) : (
+                reminders.map((reminder) => {
+                  const reminderId = String(reminder._id || reminder.id || '');
+                  const isOwnReminder = reminder.createdByRole === 'patient';
+                  return (
+                    <div
+                      key={reminderId}
+                      className={`rounded-xl border bg-background p-4 transition-colors ${
+                        reminder.isDone ? 'border-green-200 bg-green-50/50' : 'hover:bg-accent/30'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-foreground">{reminder.title}</p>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                reminder.createdByRole === 'doctor'
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'bg-accent text-accent-foreground'
+                              }`}
+                            >
+                              {reminder.createdByRole === 'doctor' ? 'Doctor set' : 'My reminder'}
+                            </span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                reminder.isDone
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-amber-100 text-amber-700'
+                              }`}
+                            >
+                              {reminder.isDone ? 'Done' : 'Not done'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{reminder.intervalLabel}</p>
+                          {(reminder.startDate || reminder.endDate) && (
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Active:{' '}
+                              {reminder.startDate ? new Date(reminder.startDate).toLocaleDateString() : 'Now'}
+                              {' '}to{' '}
+                              {reminder.endDate ? new Date(reminder.endDate).toLocaleDateString() : 'Ongoing'}
+                            </p>
+                          )}
+                          {reminder.details && (
+                            <p className="mt-2 text-xs text-muted-foreground">{reminder.details}</p>
+                          )}
+                          {reminder.lastMarkedAt && (
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              Last updated: {new Date(reminder.lastMarkedAt).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant={reminder.isDone ? 'outline' : 'default'}
+                          className="gap-2 rounded-xl"
+                          onClick={() => handleToggleReminder(reminder, !reminder.isDone)}
+                        >
+                          {reminder.isDone ? <RotateCcw className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                          {reminder.isDone ? 'Mark not done' : 'Mark done'}
+                        </Button>
+
+                        {isOwnReminder && showReminderActions && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-2 rounded-xl"
+                              onClick={() => openEditReminder(reminder)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-2 rounded-xl text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteReminder(reminder)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-foreground">{reminder.text}</p>
-                      <p className="text-xs text-muted-foreground">{reminder.time}</p>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </CardContent>
         </Card>
@@ -593,6 +1149,390 @@ export function PatientDashboard() {
           Every step of this journey matters. Your baby is growing healthy and strong.
         </p>
       </div>
+
+      <Dialog open={reminderDialogOpen} onOpenChange={setReminderDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingReminderId ? 'Edit Reminder' : 'Add Reminder'}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                value={reminderForm.title}
+                onChange={(e) => setReminderForm((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder="Choose or type a reminder"
+                list="patient-reminder-title-options"
+              />
+              <datalist id="patient-reminder-title-options">
+                {COMMON_REMINDER_TITLES.map((title) => (
+                  <option key={title} value={title} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">From date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-between rounded-xl font-normal"
+                    >
+                      <span>{formatReminderDateLabel(reminderForm.startDate, 'Select start date')}</span>
+                      <Calendar className="h-4 w-4 text-primary" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateCalendar
+                      mode="single"
+                      selected={parseStoredDate(reminderForm.startDate)}
+                      onSelect={(date) =>
+                        setReminderForm((prev) => ({
+                          ...prev,
+                          startDate: formatDateForInput(date),
+                        }))
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">To date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-between rounded-xl font-normal"
+                    >
+                      <span>{formatReminderDateLabel(reminderForm.endDate, 'Select end date')}</span>
+                      <Calendar className="h-4 w-4 text-primary" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <DateCalendar
+                      mode="single"
+                      selected={parseStoredDate(reminderForm.endDate)}
+                      onSelect={(date) =>
+                        setReminderForm((prev) => ({
+                          ...prev,
+                          endDate: formatDateForInput(date),
+                        }))
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reminder time</label>
+              <div className="hidden gap-2 md:flex">
+                <Input
+                  type="text"
+                  value={reminderForm.notifyTimeInput}
+                  onChange={(e) =>
+                    setReminderForm((prev) => ({
+                      ...prev,
+                      notifyTimeInput: formatDesktopTimeInputValue(e.target.value),
+                      notifyHourInput: '',
+                      notifyMinuteInput: '',
+                    }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddNotifyTime();
+                    }
+                  }}
+                  placeholder="10:30  PM"
+                  inputMode="text"
+                  maxLength={10}
+                />
+                <Button type="button" variant="outline" onClick={handleAddNotifyTime}>
+                  Add time
+                </Button>
+              </div>
+              <div className="space-y-2 md:hidden">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-between rounded-xl"
+                  onClick={() => setMobileTimePickerOpen(true)}
+                >
+                  <span>
+                    {reminderForm.notifyHourInput && reminderForm.notifyMinuteInput
+                      ? `${reminderForm.notifyHourInput}:${reminderForm.notifyMinuteInput} ${reminderForm.notifyMeridiemInput}`
+                      : 'Choose reminder time'}
+                  </span>
+                  <Calendar className="h-4 w-4 text-primary" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAddNotifyTime}
+                  className="w-full"
+                >
+                  Add
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {reminderForm.notifyTimes.map((time) => (
+                  <span
+                    key={time}
+                    className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs text-primary"
+                  >
+                    {formatReminderTime(time)}
+                    <button type="button" onClick={() => handleRemoveNotifyTime(time)}>
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Notes</label>
+              <Textarea
+                value={reminderForm.details}
+                onChange={(e) => setReminderForm((prev) => ({ ...prev, details: e.target.value }))}
+                placeholder="Optional details"
+                rows={3}
+              />
+            </div>
+
+            <Button
+              className="w-full rounded-xl"
+              onClick={handleSaveReminder}
+              disabled={reminderSaving || !reminderForm.title.trim() || reminderForm.notifyTimes.length === 0}
+            >
+              {reminderSaving ? 'Saving...' : editingReminderId ? 'Update Reminder' : 'Add Reminder'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={confirmReminderAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmReminderAction(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmReminderAction?.type === 'delete' ? 'Delete reminder?' : 'Confirm reminder update?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmReminderAction?.type === 'delete'
+                ? 'This will permanently remove the reminder.'
+                : 'Your reminder changes will be saved after confirmation.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={
+                confirmReminderAction?.type === 'delete'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : ''
+              }
+              onClick={async () => {
+                const action = confirmReminderAction;
+                setConfirmReminderAction(null);
+                if (!action) return;
+                if (action.type === 'delete') {
+                  await deleteReminderRecord(action.reminder);
+                  return;
+                }
+                await persistReminder();
+              }}
+            >
+              {confirmReminderAction?.type === 'delete' ? 'Delete' : 'Confirm'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={mobileTimePickerOpen} onOpenChange={setMobileTimePickerOpen}>
+        <DialogContent className="max-w-xs rounded-[28px] border-primary/10 bg-gradient-to-b from-background via-primary/[0.04] to-background p-0 md:hidden">
+          <DialogHeader className="border-b border-primary/10 px-5 py-4">
+            <DialogTitle className="text-base">Select Reminder Time</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 py-5">
+            <div className="relative grid grid-cols-[1fr_auto_1fr_1fr] items-center gap-3 rounded-[24px] bg-primary/[0.06] px-3 py-4">
+              <div className="pointer-events-none absolute left-3 right-3 top-1/2 h-11 -translate-y-1/2 rounded-2xl border border-primary/15 bg-background/80" />
+              <div
+                ref={mobileHourRef}
+                className="relative z-10 h-44 snap-y snap-mandatory overflow-y-auto py-[66px] text-center [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+                onScroll={() =>
+                  handleMobilePickerScroll(
+                    mobileHourRef,
+                    mobileHourScrollTimeoutRef,
+                    MOBILE_PICKER_HOURS,
+                    (value) =>
+                      setReminderForm((prev) => ({ ...prev, notifyHourInput: value, notifyTimeInput: '' }))
+                  )
+                }
+                onTouchEnd={() =>
+                  settleMobilePickerColumn(
+                    mobileHourRef,
+                    reminderForm.notifyHourInput || '06',
+                    MOBILE_PICKER_HOURS
+                  )
+                }
+                onMouseUp={() =>
+                  settleMobilePickerColumn(
+                    mobileHourRef,
+                    reminderForm.notifyHourInput || '06',
+                    MOBILE_PICKER_HOURS
+                  )
+                }
+              >
+                {MOBILE_PICKER_HOURS.map((hour) => (
+                  <button
+                    key={hour}
+                    type="button"
+                    className={`block h-11 w-full snap-center text-2xl font-semibold transition ${
+                      reminderForm.notifyHourInput === hour ? 'text-primary' : 'text-muted-foreground/45'
+                    }`}
+                    onClick={() => {
+                      setReminderForm((prev) => ({ ...prev, notifyHourInput: hour, notifyTimeInput: '' }));
+                      syncMobilePickerColumn(mobileHourRef, hour, MOBILE_PICKER_HOURS);
+                    }}
+                  >
+                    {hour}
+                  </button>
+                ))}
+              </div>
+              <div className="relative z-10 text-3xl font-semibold text-primary">:</div>
+              <div
+                ref={mobileMinuteRef}
+                className="relative z-10 h-44 snap-y snap-mandatory overflow-y-auto py-[66px] text-center [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+                onScroll={() =>
+                  handleMobilePickerScroll(
+                    mobileMinuteRef,
+                    mobileMinuteScrollTimeoutRef,
+                    MOBILE_PICKER_MINUTES,
+                    (value) =>
+                      setReminderForm((prev) => ({ ...prev, notifyMinuteInput: value, notifyTimeInput: '' }))
+                  )
+                }
+                onTouchEnd={() =>
+                  settleMobilePickerColumn(
+                    mobileMinuteRef,
+                    reminderForm.notifyMinuteInput || '00',
+                    MOBILE_PICKER_MINUTES
+                  )
+                }
+                onMouseUp={() =>
+                  settleMobilePickerColumn(
+                    mobileMinuteRef,
+                    reminderForm.notifyMinuteInput || '00',
+                    MOBILE_PICKER_MINUTES
+                  )
+                }
+              >
+                {MOBILE_PICKER_MINUTES.map((minute) => (
+                  <button
+                    key={minute}
+                    type="button"
+                    className={`block h-11 w-full snap-center text-2xl font-semibold transition ${
+                      reminderForm.notifyMinuteInput === minute ? 'text-primary' : 'text-muted-foreground/45'
+                    }`}
+                    onClick={() => {
+                      setReminderForm((prev) => ({ ...prev, notifyMinuteInput: minute, notifyTimeInput: '' }));
+                      syncMobilePickerColumn(mobileMinuteRef, minute, MOBILE_PICKER_MINUTES);
+                    }}
+                  >
+                    {minute}
+                  </button>
+                ))}
+              </div>
+              <div
+                ref={mobileMeridiemRef}
+                className="relative z-10 h-44 snap-y snap-mandatory overflow-y-auto py-[66px] text-center [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+                onScroll={() =>
+                  handleMobilePickerScroll(
+                    mobileMeridiemRef,
+                    mobileMeridiemScrollTimeoutRef,
+                    MOBILE_PICKER_MERIDIEMS,
+                    (value) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        notifyMeridiemInput: value,
+                        notifyTimeInput: '',
+                      }))
+                  )
+                }
+                onTouchEnd={() =>
+                  settleMobilePickerColumn(
+                    mobileMeridiemRef,
+                    reminderForm.notifyMeridiemInput || 'AM',
+                    MOBILE_PICKER_MERIDIEMS
+                  )
+                }
+                onMouseUp={() =>
+                  settleMobilePickerColumn(
+                    mobileMeridiemRef,
+                    reminderForm.notifyMeridiemInput || 'AM',
+                    MOBILE_PICKER_MERIDIEMS
+                  )
+                }
+              >
+                {MOBILE_PICKER_MERIDIEMS.map((meridiem) => (
+                  <button
+                    key={meridiem}
+                    type="button"
+                    className={`block h-11 w-full snap-center text-2xl font-semibold lowercase transition ${
+                      reminderForm.notifyMeridiemInput === meridiem
+                        ? 'text-primary'
+                        : 'text-muted-foreground/45'
+                    }`}
+                    onClick={() => {
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        notifyMeridiemInput: meridiem,
+                        notifyTimeInput: '',
+                      }));
+                      syncMobilePickerColumn(mobileMeridiemRef, meridiem, MOBILE_PICKER_MERIDIEMS);
+                    }}
+                  >
+                    {meridiem.toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 rounded-xl"
+                onClick={() => setMobileTimePickerOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" className="flex-1 rounded-xl" onClick={applyMobilePickerTime}>
+                Set
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+  useEffect(() => {
+    return () => {
+      if (mobileHourScrollTimeoutRef.current) window.clearTimeout(mobileHourScrollTimeoutRef.current);
+      if (mobileMinuteScrollTimeoutRef.current) window.clearTimeout(mobileMinuteScrollTimeoutRef.current);
+      if (mobileMeridiemScrollTimeoutRef.current) window.clearTimeout(mobileMeridiemScrollTimeoutRef.current);
+    };
+  }, []);

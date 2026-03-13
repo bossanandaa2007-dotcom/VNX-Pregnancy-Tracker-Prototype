@@ -14,5 +14,8 @@ export interface Appointment {
   date: string;
   time: string;
   notes?: string;
+  patientNotes?: string;
+  doctorNotes?: string;
   status: AppointmentStatus;
+  completedAt?: string | null;
 }

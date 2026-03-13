@@ -2,22 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users,
-  AlertTriangle,
   Calendar,
-  Plus,
   Search,
-  Filter,
   Bell,
+  Sparkles,
+  Stethoscope,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/ui/stat-card';
-import { PatientCard } from '@/components/ui/patient-card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { PatientRegistrationDialog } from './PatientRegistrationDialog';
-import { PatientDetailDialog } from './PatientDetailDialog';
 import { Patient } from '@/types';
+import { Appointment } from '@/types/appointment';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from "@/config/api";
@@ -29,16 +25,64 @@ import {
   WeatherSummary,
 } from '@/lib/notifications';
 
+type AppointmentApiShape = {
+  _id?: string;
+  id?: string;
+  patientName?: string;
+  patientId?: string;
+  doctorName?: string;
+  doctorId?: string;
+  date?: string;
+  time?: string;
+  notes?: string;
+  patientNotes?: string;
+  doctorNotes?: string;
+  status?: Appointment['status'];
+  completedAt?: string | null;
+};
+
+const mapAppointment = (appt: AppointmentApiShape): Appointment => ({
+  id: appt._id || appt.id || `${Date.now()}`,
+  patientName: appt.patientName || 'Patient',
+  doctorName: appt.doctorName || '',
+  patientId: appt.patientId,
+  doctorId: appt.doctorId,
+  date: appt.date || '',
+  time: appt.time || '',
+  notes: appt.patientNotes || appt.notes || '',
+  patientNotes: appt.patientNotes || appt.notes || '',
+  doctorNotes: appt.doctorNotes || '',
+  status: appt.status || 'pending',
+  completedAt: appt.completedAt || null,
+});
+
+const parseAppointmentDateTime = (appointment: Pick<Appointment, 'date' | 'time'>) => {
+  if (!appointment.date || !appointment.time) return null;
+
+  const [timePart, meridiem] = appointment.time.trim().split(' ');
+  if (!timePart || !meridiem) return null;
+
+  const [hoursText, minutesText] = timePart.split(':');
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  let normalizedHours = hours % 12;
+  if (meridiem.toUpperCase() === 'PM') normalizedHours += 12;
+
+  const value = new Date(`${appointment.date}T00:00:00`);
+  value.setHours(normalizedHours, minutes, 0, 0);
+  return value;
+};
+
 export function DoctorDashboard() {
   const navigate = useNavigate();
   const { user } = useAuth(); // 👈 logged in doctor
   const { toast } = useToast();
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [notificationSearchQuery, setNotificationSearchQuery] = useState('');
-  const [isRegistrationOpen, setIsRegistrationOpen] = useState(false);
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
   const [city, setCity] = useState(() => localStorage.getItem('vnx_city') || 'Chennai');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -91,11 +135,12 @@ export function DoctorDashboard() {
         name: p.name,
         email: p.email,
         age: p.age,
+        profilePhoto: p.profilePhoto,
         gestationalWeek: p.gestationalWeek,
         riskStatus: p.riskStatus,
         medicalNotes: p.medicalNotes,
         pregnancyStartDate: p.pregnancyStartDate,
-        contactPhone: p.phone,
+        contactPhone: p.contactPhone || p.phone,
         doctorId: p.doctorId,
         createdAt: p.createdAt,
       }));
@@ -118,6 +163,24 @@ export function DoctorDashboard() {
       fetchPatients();
     }
   }, [user]);
+
+  useEffect(() => {
+    const loadAppointments = async () => {
+      if (!user?.id || user.role !== 'doctor') return;
+      try {
+        const res = await fetch(`${API_BASE}/api/appointments/doctor/${user.id}`);
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.message || 'Unable to load appointments');
+        }
+        setAppointments((data.appointments || []).map(mapAppointment));
+      } catch (error) {
+        console.error('Doctor dashboard appointments fetch error:', error);
+      }
+    };
+
+    loadAppointments();
+  }, [user?.id, user?.role]);
 
   const loadNotifications = async (nextCity: string) => {
     if (!user?.id) return;
@@ -187,39 +250,31 @@ export function DoctorDashboard() {
   const latest = notifications[0];
 
   const totalPatients = patients.length;
-  const highRiskPatients = patients.filter(
-    (p) => p.riskStatus === 'high-risk'
-  ).length;
-  const upcomingFollowups = patients.filter(
-    (p) => p.riskStatus !== 'normal'
-  ).length;
-
-  const filteredPatients = patients.filter(
-    (p) =>
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.email.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const handlePatientRegistered = (newPatient: Patient) => {
-    setPatients((prev) => [...prev, newPatient]);
-  };
+  const upcomingFollowups = useMemo(() => {
+    const nowValue = new Date();
+    return appointments.filter((appointment) => {
+      if (appointment.status !== 'approved') return false;
+      const appointmentDateTime = parseAppointmentDateTime(appointment);
+      return appointmentDateTime ? appointmentDateTime.getTime() > nowValue.getTime() : false;
+    }).length;
+  }, [appointments]);
 
   return (
     <div className="space-y-8">
 
       {/* ================= HEADER ================= */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">
+      <div className="flex flex-col gap-5 rounded-[28px] border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-background to-accent/30 p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-7">
+        <div className="space-y-3">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-[2.1rem]">
             Doctor Dashboard
           </h1>
-          <p className="text-muted-foreground">
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             Manage your patients and monitor their pregnancy journey
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="rounded-xl border bg-background px-4 py-2 text-right">
+        <div className="hidden sm:block">
+          <div className="rounded-[24px] border bg-background/90 px-4 py-3 text-right shadow-sm">
             <p className="text-xs text-muted-foreground">
               {now.toLocaleDateString('en-IN', {
                 weekday: 'short',
@@ -240,13 +295,6 @@ export function DoctorDashboard() {
             </p>
           </div>
 
-          <Button
-            onClick={() => setIsRegistrationOpen(true)}
-            className="gap-2 rounded-xl"
-          >
-            <Plus className="h-4 w-4" />
-            Register New Patient
-          </Button>
         </div>
       </div>
 
@@ -358,7 +406,7 @@ export function DoctorDashboard() {
       </Card>
 
       {/* ================= STATS ================= */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
 
         <div
           className="cursor-pointer transition hover:shadow-md"
@@ -375,92 +423,16 @@ export function DoctorDashboard() {
 
         <div
           className="cursor-pointer transition hover:shadow-md"
-          onClick={() => navigate('/patients?filter=high-risk')}
-        >
-          <StatCard
-            title="High-Risk Patients"
-            value={highRiskPatients}
-            subtitle="Require close monitoring"
-            icon={<AlertTriangle className="h-6 w-6" />}
-            variant="danger"
-          />
-        </div>
-
-        <div
-          className="cursor-pointer transition hover:shadow-md"
           onClick={() => navigate('/doctor/appointments')}
         >
           <StatCard
             title="Upcoming Follow-ups"
             value={upcomingFollowups}
-            subtitle="This week"
+            subtitle="Approved appointments"
             icon={<Calendar className="h-6 w-6" />}
             variant="warning"
           />
         </div>
-      </div>
-
-      {/* ================= PATIENT MANAGEMENT ================= */}
-      <div className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg font-semibold">Your Patients</h2>
-
-          <div className="flex gap-2">
-            <div className="relative flex-1 sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search patients..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 rounded-xl"
-              />
-            </div>
-
-            <Button
-              variant="outline"
-              size="icon"
-              className="rounded-xl"
-            >
-              <Filter className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Patient Grid */}
-        {loading ? (
-          <p className="text-muted-foreground">Loading patients...</p>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredPatients.map((patient) => (
-              <PatientCard
-                key={patient.id}
-                patient={patient}
-                onClick={() => setSelectedPatient(patient)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Empty State */}
-        {!loading && filteredPatients.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border p-12">
-            <Users className="mb-4 h-12 w-12 text-muted-foreground/50" />
-            <p className="text-muted-foreground text-center">
-              {searchQuery
-                ? 'No patients found matching your search'
-                : 'No patients registered yet'}
-            </p>
-            {!searchQuery && (
-              <Button
-                variant="link"
-                className="mt-2"
-                onClick={() => setIsRegistrationOpen(true)}
-              >
-                Register your first patient
-              </Button>
-            )}
-          </div>
-        )}
       </div>
 
       {/* ================= NOTIFICATIONS ================= */}
@@ -520,21 +492,6 @@ export function DoctorDashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* ================= DIALOGS ================= */}
-      <PatientRegistrationDialog
-        open={isRegistrationOpen}
-        onOpenChange={setIsRegistrationOpen}
-        onPatientRegistered={handlePatientRegistered}
-      />
-
-      {selectedPatient && (
-        <PatientDetailDialog
-          patient={selectedPatient}
-          open={!!selectedPatient}
-          onOpenChange={(open) => !open && setSelectedPatient(null)}
-        />
-      )}
     </div>
   );
 }

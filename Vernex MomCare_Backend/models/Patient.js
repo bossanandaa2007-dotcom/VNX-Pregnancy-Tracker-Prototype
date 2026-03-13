@@ -14,6 +14,7 @@ const patientSchema = new mongoose.Schema(
     husbandName: String,
     husbandPhone: String,
     medicalNotes: String,
+    profilePhoto: { type: String, default: "" },
 
     riskStatus: {
       type: String,

@@ -5,6 +5,7 @@ export type ConversationItem = {
   peerName: string;
   peerRole: string;
   peerEmail: string;
+  profilePhoto?: string;
   lastMessage: string;
   lastAt: string;
   unreadCount: number;

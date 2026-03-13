@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -18,6 +19,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { API_BASE } from '@/config/api';
 
 interface NavItem {
   icon: React.ElementType;
@@ -55,6 +58,35 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const [resolvedPhoto, setResolvedPhoto] = useState(user?.profilePhoto || '');
+
+  useEffect(() => {
+    setResolvedPhoto(user?.profilePhoto || '');
+  }, [user?.profilePhoto]);
+
+  useEffect(() => {
+    const loadProfilePhoto = async () => {
+      if (!user?.id || user?.profilePhoto) return;
+
+      try {
+        const endpoint =
+          user.role === 'doctor'
+            ? `${API_BASE}/api/auth/doctor/${user.id}`
+            : `${API_BASE}/api/auth/patient/${user.id}`;
+
+        const res = await fetch(endpoint);
+        const data = await res.json().catch(() => null);
+        const profile = data?.doctor || data?.patient;
+        if (res.ok && data?.success && profile?.profilePhoto) {
+          setResolvedPhoto(profile.profilePhoto);
+        }
+      } catch (error) {
+        console.error('Sidebar photo fetch error:', error);
+      }
+    };
+
+    void loadProfilePhoto();
+  }, [user?.id, user?.profilePhoto, user?.role]);
 
   const filteredItems = navItems.filter((item) => {
     if (item.doctorOnly && user?.role !== 'doctor') return false;
@@ -119,9 +151,12 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
           {/* User Info */}
           <div className="border-b p-4">
             <div className="flex items-center gap-3 rounded-lg bg-sidebar-accent/50 p-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                <User className="h-5 w-5 text-primary" />
-              </div>
+              <Avatar className="h-10 w-10 rounded-full bg-primary/10">
+                <AvatarImage src={resolvedPhoto} alt={user?.name || 'Profile'} className="object-cover" />
+                <AvatarFallback className="bg-primary/10">
+                  <User className="h-5 w-5 text-primary" />
+                </AvatarFallback>
+              </Avatar>
               <div>
                 <p className="text-sm font-medium">{user?.name}</p>
                 <p className="text-xs capitalize text-muted-foreground">

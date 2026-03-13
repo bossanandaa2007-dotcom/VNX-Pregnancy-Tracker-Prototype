@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { User, Stethoscope, Phone, Mail, Clock, Hospital } from 'lucide-react';
 import { API_BASE } from "@/config/api";
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 type DoctorShape = {
   _id?: string;
@@ -15,6 +16,7 @@ type DoctorShape = {
   email?: string;
   specialty?: string;
   phone?: string;
+  profilePhoto?: string;
 };
 
 type PatientShape = {
@@ -43,6 +45,7 @@ export default function DoctorInfo() {
       hospital: DEFAULT_HOSPITAL,
       phone: doctor.phone || 'Not available',
       email: doctor.email || 'Not available',
+      profilePhoto: doctor.profilePhoto || '',
       availability: DEFAULT_AVAILABILITY,
     };
   }, [doctor]);
@@ -77,6 +80,18 @@ export default function DoctorInfo() {
           return;
         }
 
+        if (typeof doctorId === 'object' && doctorId?._id) {
+          const doctorRes = await fetch(`${API_BASE}/api/auth/doctor/${doctorId._id}`);
+          const doctorData = await doctorRes.json();
+          if (doctorRes.ok && doctorData?.success) {
+            setDoctor(doctorData.doctor as DoctorShape);
+            return;
+          }
+
+          setDoctor(doctorId);
+          return;
+        }
+
         if (typeof doctorId === 'object') {
           setDoctor(doctorId);
           return;
@@ -106,18 +121,25 @@ export default function DoctorInfo() {
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-4xl">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Doctor Information</h1>
-          <p className="text-muted-foreground">View details of your assigned doctor</p>
-          {loading && <p className="text-xs text-muted-foreground mt-1">Loading doctor details...</p>}
-          {!!error && <p className="text-xs text-muted-foreground mt-1">{error}</p>}
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="flex flex-col gap-4 p-5 sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Doctor Information</h1>
+              <p className="text-muted-foreground">View details of your assigned doctor</p>
+            </div>
+            {loading && <p className="text-xs text-muted-foreground">Loading doctor details...</p>}
+            {!!error && <p className="text-xs text-muted-foreground">{error}</p>}
+          </div>
         </div>
 
         <Card>
           <CardContent className="flex flex-col sm:flex-row items-start sm:items-center gap-6 pt-6">
-            <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10">
-              <User className="h-12 w-12 text-primary" />
-            </div>
+            <Avatar className="h-24 w-24 rounded-2xl bg-primary/10">
+              <AvatarImage src={doctorProfile?.profilePhoto} alt={doctorProfile?.name || 'Doctor'} className="object-cover" />
+              <AvatarFallback className="rounded-2xl bg-primary/10">
+                <User className="h-12 w-12 text-primary" />
+              </AvatarFallback>
+            </Avatar>
 
             <div className="flex-1 space-y-2">
               <div className="flex items-center gap-2">

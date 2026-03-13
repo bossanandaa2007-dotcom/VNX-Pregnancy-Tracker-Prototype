@@ -15,8 +15,8 @@ const toMapById = (arr) =>
 
 const resolveIdentity = async (id) => {
   const [patient, doctor] = await Promise.all([
-    Patient.findById(id).select("name email"),
-    User.findById(id).select("name email role specialty"),
+    Patient.findById(id).select("name email profilePhoto"),
+    User.findById(id).select("name email role specialty profilePhoto"),
   ]);
 
   if (patient) {
@@ -25,6 +25,7 @@ const resolveIdentity = async (id) => {
       name: patient.name,
       email: patient.email,
       role: "patient",
+      profilePhoto: patient.profilePhoto || "",
     };
   }
 
@@ -35,6 +36,7 @@ const resolveIdentity = async (id) => {
       email: doctor.email,
       role: doctor.role,
       specialty: doctor.specialty,
+      profilePhoto: doctor.profilePhoto || "",
     };
   }
 
@@ -180,8 +182,8 @@ router.get("/conversations/:userId", async (req, res) => {
     ]);
     const unreadMap = new Map(unreadRows.map((r) => [String(r._id), r.count]));
     const [patients, doctors] = await Promise.all([
-      Patient.find({ _id: { $in: peerIds } }).select("name email").lean(),
-      User.find({ _id: { $in: peerIds } }).select("name email role specialty").lean(),
+      Patient.find({ _id: { $in: peerIds } }).select("name email profilePhoto").lean(),
+      User.find({ _id: { $in: peerIds } }).select("name email role specialty profilePhoto").lean(),
     ]);
     const patientMap = toMapById(patients);
     const doctorMap = toMapById(doctors);
@@ -197,6 +199,7 @@ router.get("/conversations/:userId", async (req, res) => {
         peerName: profile?.name || "Unknown",
         peerRole: patient ? "patient" : doctor?.role || "unknown",
         peerEmail: profile?.email || "",
+        profilePhoto: profile?.profilePhoto || "",
         lastMessage: msg.content,
         lastAt: msg.createdAt,
         unreadCount: unreadMap.get(peerId) || 0,

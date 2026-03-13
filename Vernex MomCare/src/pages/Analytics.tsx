@@ -138,13 +138,17 @@ export default function Analytics() {
         )}
 
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold">Health Analytics</h1>
-          <p className="text-muted-foreground">
-            {isReadOnlyView
-              ? 'Read-only view of patient health metrics'
-              : 'Track your pregnancy health journey'}
-          </p>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="flex flex-col gap-5 p-5 sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold">Health Analytics</h1>
+              <p className="max-w-xl text-muted-foreground">
+                {isReadOnlyView
+                  ? 'Read-only view of patient health metrics'
+                  : 'Track your pregnancy health journey'}
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Disclaimer */}

@@ -22,12 +22,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 interface PatientItem {
   _id: string;
   name: string;
   email?: string;
   age?: number;
+  profilePhoto?: string;
   pregnancyStartDate?: string;
   gestationalWeek: number;
   riskStatus: 'normal' | 'attention' | 'high-risk';
@@ -180,9 +182,12 @@ export default function AdminDoctorDetail() {
           {patients.map((p) => (
             <Card key={p._id} className="hover:shadow-sm transition cursor-pointer" onClick={() => openPatientDialog(p)}>
               <CardContent className="p-4 flex items-center gap-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                  <User className="h-5 w-5 text-primary" />
-                </div>
+                <Avatar className="h-10 w-10 rounded-full bg-primary/10">
+                  <AvatarImage src={p.profilePhoto} alt={p.name} className="object-cover" />
+                  <AvatarFallback className="bg-primary/10">
+                    <User className="h-5 w-5 text-primary" />
+                  </AvatarFallback>
+                </Avatar>
 
                 <div className="flex-1">
                   <p className="font-medium">{p.name}</p>
@@ -210,9 +215,12 @@ export default function AdminDoctorDetail() {
             <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10">
-                    <User className="h-7 w-7 text-primary" />
-                  </div>
+                  <Avatar className="h-14 w-14 rounded-xl bg-primary/10">
+                    <AvatarImage src={selectedPatient.profilePhoto} alt={selectedPatient.name} className="object-cover" />
+                    <AvatarFallback className="rounded-xl bg-primary/10">
+                      <User className="h-7 w-7 text-primary" />
+                    </AvatarFallback>
+                  </Avatar>
                   <div className="flex-1">
                     <DialogTitle className="text-xl">{selectedPatient.name}</DialogTitle>
                     <div className="flex items-center gap-3 mt-1">

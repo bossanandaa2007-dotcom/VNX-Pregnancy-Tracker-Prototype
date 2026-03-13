@@ -16,6 +16,7 @@ const userSchema = new mongoose.Schema(
     experience: String,
     hospital: String,
     location: String,
+    profilePhoto: { type: String, default: "" },
   },
   { timestamps: true }
 );

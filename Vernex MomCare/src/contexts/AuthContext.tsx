@@ -82,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         riskStatus: data.user.riskStatus,
         doctorId: data.user.doctorId,
         husbandPhone: data.user.husbandPhone,
+        profilePhoto: data.user.profilePhoto,
       };
 
       setUser(nextUser);

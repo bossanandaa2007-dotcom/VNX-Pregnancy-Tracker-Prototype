@@ -12,6 +12,7 @@ const messageRoutes = require("./routes/messageRoutes");
 const appointmentRoutes = require("./routes/appointmentRoutes");
 const guideRoutes = require("./routes/guides");
 const approvalRoutes = require("./routes/approvalRoutes");
+const reminderRoutes = require("./routes/reminderRoutes");
 const Guide = require("./models/Guide");
 const guideDataset = require("./data/guideDataset");
 const app = express();
@@ -37,11 +38,11 @@ connectDB()
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true,
   })
 );
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "20mb" }));
 
 // 3) Routes
 app.get("/", (req, res) => {
@@ -55,6 +56,7 @@ app.use("/api/diary", diaryRoutes);
 app.use("/api/pregnancy", pregnancyRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/reminders", reminderRoutes);
 app.use("/api/guides", guideRoutes);
 app.use("/api/auth/guides", guideRoutes);
 app.use("/api/approvals", approvalRoutes);

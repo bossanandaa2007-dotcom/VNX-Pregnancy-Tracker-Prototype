@@ -5,9 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Mail, Phone, Heart, Shield, Edit2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
+import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from "@/config/api";
 
 type PatientProfile = {
@@ -21,6 +23,7 @@ type PatientProfile = {
   contactPhone?: string;
   doctorId?: string | { _id?: string; name?: string; email?: string };
   riskStatus?: 'normal' | 'attention' | 'high-risk';
+  profilePhoto?: string;
 };
 
 type DoctorProfile = {
@@ -32,10 +35,10 @@ type DoctorProfile = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
 export default function Profile() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const isDoctor = user?.role === 'doctor';
 
   const [patient, setPatient] = useState<PatientProfile | null>(null);
@@ -129,24 +132,36 @@ export default function Profile() {
     if (!isDoctor) loadDoctor();
   }, [patient?.doctorId, isDoctor]);
 
+  const profilePhoto = patient?.profilePhoto || user?.profilePhoto || '';
+
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-3xl">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Profile</h1>
-          <p className="text-muted-foreground">
-            {isDoctor ? 'Manage your doctor profile' : 'View your pregnancy profile'}
-          </p>
-          {loading && <p className="text-xs text-muted-foreground mt-1">Loading profile...</p>}
-          {!!error && <p className="text-xs text-muted-foreground mt-1">{error}</p>}
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="flex flex-col gap-4 p-5 sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Profile</h1>
+              <p className="text-muted-foreground">
+                {isDoctor ? 'Manage your doctor profile' : 'View your pregnancy profile'}
+              </p>
+            </div>
+
+            {loading && <p className="text-xs text-muted-foreground">Loading profile...</p>}
+            {!!error && <p className="text-xs text-muted-foreground">{error}</p>}
+          </div>
         </div>
 
         <Card className="overflow-hidden">
           <div className="h-24 bg-gradient-to-r from-primary/20 via-primary/10 to-accent/20" />
           <CardContent className="relative pt-0">
             <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12">
-              <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-4 border-background bg-primary/10">
-                <User className="h-10 w-10 text-primary" />
+              <div>
+                <Avatar className="h-24 w-24 rounded-2xl border-4 border-background bg-primary/10">
+                  <AvatarImage src={profilePhoto} alt={user?.name || 'Profile'} className="object-cover" />
+                  <AvatarFallback className="rounded-2xl bg-primary/10">
+                    <User className="h-10 w-10 text-primary" />
+                  </AvatarFallback>
+                </Avatar>
               </div>
               <div className="flex-1 pb-2">
                 <div className="flex items-center gap-2">

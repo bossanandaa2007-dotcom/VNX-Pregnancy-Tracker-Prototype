@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   User,
   Mail,
@@ -33,6 +34,7 @@ type DoctorProfileShape = {
   experience?: string;
   hospital?: string;
   location?: string;
+  profilePhoto?: string;
 };
 
 export default function DoctorProfile() {
@@ -100,17 +102,21 @@ export default function DoctorProfile() {
     [doctor, totalPatients]
   );
 
+  const profilePhoto = doctor?.profilePhoto || user?.profilePhoto || '';
+
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-4xl">
 
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold">Doctor Profile</h1>
-          <p className="text-muted-foreground">
-            Manage your professional information
-          </p>
-          {loading && <p className="text-xs text-muted-foreground mt-1">Loading profile...</p>}
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="p-5 sm:p-6">
+            <h1 className="text-2xl font-bold">Doctor Profile</h1>
+            <p className="text-muted-foreground">
+              Manage your professional information
+            </p>
+            {loading && <p className="text-xs text-muted-foreground mt-1">Loading profile...</p>}
+          </div>
         </div>
 
         {/* Profile Card */}
@@ -118,8 +124,13 @@ export default function DoctorProfile() {
           <div className="h-24 bg-gradient-to-r from-primary/20 via-primary/10 to-accent/20" />
           <CardContent className="relative pt-0">
             <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12">
-              <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-4 border-background bg-primary/10">
-                <User className="h-10 w-10 text-primary" />
+              <div>
+                <Avatar className="h-24 w-24 rounded-2xl border-4 border-background bg-primary/10">
+                  <AvatarImage src={profilePhoto} alt={doctor?.name || user?.name || 'Doctor'} className="object-cover" />
+                  <AvatarFallback className="rounded-2xl bg-primary/10">
+                    <User className="h-10 w-10 text-primary" />
+                  </AvatarFallback>
+                </Avatar>
               </div>
 
               <div className="flex-1 pb-2">

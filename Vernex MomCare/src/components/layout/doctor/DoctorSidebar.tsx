@@ -6,6 +6,7 @@ import {
   MessageCircle,
   CalendarDays,
   User,
+  Users,
   Library,
   BookOpen,
   LogOut,
@@ -15,29 +16,42 @@ import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { fetchUnreadCount } from '@/lib/doctorChat';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { API_BASE } from '@/config/api';
 
 interface NavItem {
   icon: React.ElementType;
   label: string;
   path: string;
-  showBadge?: boolean;
+  badgeType?: 'chat' | 'appointments';
 }
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+  { icon: Users, label: 'Patient Management', path: '/patients' },
   { icon: BarChart3, label: 'Analytics', path: '/doctor/analytics' },
-  { icon: MessageCircle, label: 'Chat', path: '/doctor/chat', showBadge: true },
-  { icon: CalendarDays, label: 'Appointments', path: '/doctor/appointments' },
+  { icon: MessageCircle, label: 'Chat', path: '/doctor/chat', badgeType: 'chat' },
+  { icon: CalendarDays, label: 'Appointments', path: '/doctor/appointments', badgeType: 'appointments' },
   { icon: BookOpen, label: 'Guide', path: '/guide' },
   { icon: Library, label: 'Library', path: '/library' },
   { icon: User, label: 'Profile', path: '/doctor/profile' },
 ];
+
+type AppointmentApiShape = {
+  status?: string;
+};
 
 export function DoctorSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [pendingAppointmentCount, setPendingAppointmentCount] = useState(0);
+  const [resolvedPhoto, setResolvedPhoto] = useState(user?.profilePhoto || '');
+
+  useEffect(() => {
+    setResolvedPhoto(user?.profilePhoto || '');
+  }, [user?.profilePhoto]);
 
   useEffect(() => {
     const loadUnread = async () => {
@@ -54,6 +68,48 @@ export function DoctorSidebar() {
     const id = setInterval(loadUnread, 4000);
     return () => clearInterval(id);
   }, [user?.id]);
+
+  useEffect(() => {
+    const loadPendingAppointments = async () => {
+      if (!user?.id || user.role !== 'doctor') return;
+      try {
+        const res = await fetch(`${API_BASE}/api/appointments/doctor/${user.id}`);
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.message || 'Failed to fetch appointments');
+        }
+
+        const pendingCount = (data.appointments || []).filter(
+          (appointment: AppointmentApiShape) => appointment.status === 'pending'
+        ).length;
+        setPendingAppointmentCount(pendingCount);
+      } catch (err) {
+        console.error('Pending appointment count error:', err);
+      }
+    };
+
+    loadPendingAppointments();
+    const id = setInterval(loadPendingAppointments, 4000);
+    return () => clearInterval(id);
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    const loadProfilePhoto = async () => {
+      if (!user?.id || user?.profilePhoto) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/doctor/${user.id}`);
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success && data?.doctor?.profilePhoto) {
+          setResolvedPhoto(data.doctor.profilePhoto);
+        }
+      } catch (error) {
+        console.error('Doctor sidebar photo fetch error:', error);
+      }
+    };
+
+    void loadProfilePhoto();
+  }, [user?.id, user?.profilePhoto]);
 
   return (
     <aside className="fixed left-0 top-0 z-50 h-screen w-64 border-r border-border bg-sidebar">
@@ -72,9 +128,12 @@ export function DoctorSidebar() {
 
         <div className="border-b p-4">
           <div className="flex items-center gap-3 rounded-lg bg-sidebar-accent/50 p-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-              <User className="h-5 w-5 text-primary" />
-            </div>
+            <Avatar className="h-10 w-10 rounded-full bg-primary/10">
+              <AvatarImage src={resolvedPhoto} alt={user?.name || 'Profile'} className="object-cover" />
+              <AvatarFallback className="bg-primary/10">
+                <User className="h-5 w-5 text-primary" />
+              </AvatarFallback>
+            </Avatar>
             <div>
               <p className="text-sm font-medium">{user?.name}</p>
               <p className="text-xs capitalize text-muted-foreground">{user?.role}</p>
@@ -101,7 +160,7 @@ export function DoctorSidebar() {
                   {item.label}
                 </div>
 
-                {item.showBadge && unreadChatCount > 0 && (
+                {item.badgeType === 'chat' && unreadChatCount > 0 && (
                   <span
                     className="
                     flex h-5 min-w-[20px] items-center justify-center
@@ -110,6 +169,18 @@ export function DoctorSidebar() {
                   "
                   >
                     {unreadChatCount}
+                  </span>
+                )}
+
+                {item.badgeType === 'appointments' && pendingAppointmentCount > 0 && (
+                  <span
+                    className="
+                    flex h-5 min-w-[20px] items-center justify-center
+                    rounded-full bg-primary px-1.5
+                    text-[11px] font-medium text-primary-foreground
+                  "
+                  >
+                    {pendingAppointmentCount}
                   </span>
                 )}
               </button>

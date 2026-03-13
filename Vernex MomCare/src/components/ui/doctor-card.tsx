@@ -1,6 +1,7 @@
 import { Users, Stethoscope } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 interface DoctorCardProps {
   doctor: {
@@ -9,6 +10,7 @@ interface DoctorCardProps {
     email: string;
     specialty: string;
     patientCount: number;
+    profilePhoto?: string;
   };
   onClick?: () => void;
 }
@@ -25,9 +27,12 @@ export function DoctorCard({ doctor, onClick }: DoctorCardProps) {
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <Stethoscope className="h-6 w-6 text-primary" />
-            </div>
+            <Avatar className="h-12 w-12 rounded-xl bg-primary/10">
+              <AvatarImage src={doctor.profilePhoto} alt={doctor.name} className="object-cover" />
+              <AvatarFallback className="rounded-xl bg-primary/10">
+                <Stethoscope className="h-6 w-6 text-primary" />
+              </AvatarFallback>
+            </Avatar>
             <div>
               <p className="font-semibold text-foreground">{doctor.name}</p>
               <p className="text-xs text-muted-foreground">

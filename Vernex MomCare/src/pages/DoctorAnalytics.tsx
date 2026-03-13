@@ -83,11 +83,13 @@ export default function DoctorAnalytics() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Patient Analytics</h1>
-          <p className="text-muted-foreground">
-            Select a patient to view detailed health analytics
-          </p>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="p-5 sm:p-6">
+            <h1 className="text-2xl font-bold">Patient Analytics</h1>
+            <p className="text-muted-foreground">
+              Select a patient to view detailed health analytics
+            </p>
+          </div>
         </div>
 
         {loading && sortedPatients.length === 0 ? (

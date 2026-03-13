@@ -17,12 +17,14 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPatientRegistered: (patient: Patient) => void;
+  onRequestSubmitted?: () => void;
 }
 
 export function PatientRegistrationDialog({
   open,
   onOpenChange,
   onPatientRegistered: _onPatientRegistered,
+  onRequestSubmitted,
 }: Props) {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -40,6 +42,11 @@ export function PatientRegistrationDialog({
   const [loading, setLoading] = useState(false);
 
   const handleChange = (key: keyof typeof form, value: string) => {
+    if (key === 'phone') {
+      const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
+      setForm((prev) => ({ ...prev, [key]: digitsOnly }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -102,6 +109,7 @@ export function PatientRegistrationDialog({
         phone: '',
         notes: '',
       });
+      onRequestSubmitted?.();
       onOpenChange(false);
     } catch (err: any) {
       console.error('Create patient error:', err);
@@ -183,7 +191,9 @@ export function PatientRegistrationDialog({
             <div>
               <Label>Contact Phone</Label>
               <Input
-                placeholder="+91 XXXXX XXXXX"
+                placeholder="10-digit phone number"
+                inputMode="numeric"
+                maxLength={10}
                 value={form.phone}
                 onChange={(e) => handleChange('phone', e.target.value)}
               />

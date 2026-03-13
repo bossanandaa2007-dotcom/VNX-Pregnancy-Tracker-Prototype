@@ -17,6 +17,7 @@ export interface Doctor {
   email: string;
   specialty: string;
   phone?: string;
+  profilePhoto?: string;
   patientCount: number;
 }
 
@@ -45,6 +46,11 @@ export function RegisterDoctorDialog({
   const [loading, setLoading] = useState(false);
 
   const handleChange = (key: keyof typeof form, value: string) => {
+    if (key === 'phone') {
+      const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
+      setForm((prev) => ({ ...prev, [key]: digitsOnly }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -89,6 +95,7 @@ export function RegisterDoctorDialog({
         email: data.doctor.email,
         specialty: data.doctor.specialty,
         phone: data.doctor.phone,
+        profilePhoto: data.doctor.profilePhoto,
         patientCount: 0,
       };
 
@@ -179,7 +186,9 @@ export function RegisterDoctorDialog({
             <div>
               <Label>Contact Phone</Label>
               <Input
-                placeholder="+91 XXXXX XXXXX"
+                placeholder="10-digit phone number"
+                inputMode="numeric"
+                maxLength={10}
                 value={form.phone}
                 onChange={(e) => handleChange('phone', e.target.value)}
               />

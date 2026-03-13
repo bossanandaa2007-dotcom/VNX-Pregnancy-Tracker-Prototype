@@ -15,8 +15,8 @@ export function MobileBottomNav() {
   const navigate = useNavigate();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background lg:hidden">
-      <div className="flex justify-around py-2">
+    <nav className="fixed inset-x-0 bottom-0 z-[80] border-t border-border/80 bg-background lg:hidden">
+      <div className="grid grid-cols-5 gap-1 px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {items.map((item) => {
           const active = location.pathname === item.path;
           const Icon = item.icon;
@@ -26,7 +26,7 @@ export function MobileBottomNav() {
               key={item.path}
               onClick={() => navigate(item.path)}
               className={cn(
-                'flex flex-col items-center gap-1 text-xs',
+                'flex flex-col items-center gap-1 px-2 py-1.5 text-[11px] font-medium transition',
                 active ? 'text-primary' : 'text-muted-foreground'
               )}
             >

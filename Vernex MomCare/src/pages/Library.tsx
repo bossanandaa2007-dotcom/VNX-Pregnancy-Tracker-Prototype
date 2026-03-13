@@ -48,11 +48,13 @@ export default function Library() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Educational Library</h1>
-          <p className="text-muted-foreground">
-            Curated pregnancy resources and reading materials
-          </p>
+        <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-accent/40">
+          <div className="p-5 sm:p-6">
+            <h1 className="text-2xl font-bold text-foreground">Educational Library</h1>
+            <p className="text-muted-foreground">
+              Curated pregnancy resources and reading materials
+            </p>
+          </div>
         </div>
 
         {/* Search & Filters */}
